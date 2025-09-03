@@ -12,6 +12,32 @@ set -euo pipefail
 # ----- Configuration -----  
 SUFFIX="-reef"   # default twin suffix
 
+# ----- Colors & symbols (fallback to plain if not a TTY) -----
+is_tty=0
+if [ -t 1 ]; then is_tty=1; fi
+
+if [ "$is_tty" -eq 1 ]; then
+  RED="$(printf '\033[31m')"
+  GREEN="$(printf '\033[32m')"
+  YELLOW="$(printf '\033[33m')"
+  DIM="$(printf '\033[2m')"
+  BOLD="$(printf '\033[1m')"
+  RESET="$(printf '\033[0m')"
+  OK="✓"
+  ERR="✗"
+  DOT="●"
+  ARROW_RX="→"
+  ARROW_LX="←"
+  CONNECT="━"
+  WARN="⚠️"
+  FILE_ICON="📄"
+  FOLDER_ICON="📁"
+  LINK_ICON="🔗"
+else
+  RED=""; GREEN=""; YELLOW=""; DIM=""; BOLD=""; RESET=""
+  OK="[OK]"; ERR="[ERR]"; DOT="*"; ARROW_RX="->"; ARROW_LX="<-"; CONNECT="-"; WARN="[WARN]"; FILE_ICON="[F]"; FOLDER_ICON="[D]"; LINK_ICON="[L]"
+fi
+
 # Parse arguments
 verbose=0
 args=()
@@ -49,34 +75,13 @@ EOF
   esac
 done
 
-# ----- Colors & symbols (fallback to plain if not a TTY) -----
-is_tty=0
-if [ -t 1 ]; then is_tty=1; fi
-
-if [ "$is_tty" -eq 1 ]; then
-  RED="$(printf '\033[31m')"
-  GREEN="$(printf '\033[32m')"
-  YELLOW="$(printf '\033[33m')"
-  DIM="$(printf '\033[2m')"
-  BOLD="$(printf '\033[1m')"
-  RESET="$(printf '\033[0m')"
-  OK="✓"
-  ERR="✗"
-  DOT="●"
-  ARROW_RX="→"
-  ARROW_LX="←"
-  CONNECT="━"
-  WARN="⚠️"
-  FILE_ICON="📄"
-  FOLDER_ICON="📁"
-  LINK_ICON="🔗"
-else
-  RED=""; GREEN=""; YELLOW=""; DIM=""; BOLD=""; RESET=""
-  OK="[OK]"; ERR="[ERR]"; DOT="*"; ARROW_RX="->"; ARROW_LX="<-"; CONNECT="-"; WARN="[WARN]"; FILE_ICON="[F]"; FOLDER_ICON="[D]"; LINK_ICON="[L]"
-fi
-
 # Check for required symlink argument
-if [ "${#args[@]}" -ne 1 ]; then
+if [ "${#args[@]}" -eq 0 ]; then
+  printf "%s%s%s Error: missing required argument <symlink>\n" "$RED" "$ERR" "$RESET" >&2
+  printf "%s%s%s Usage: reef-recall [-v|--verbose] [--suffix=SUFFIX] <symlink>\n" "$YELLOW" "$DOT" "$RESET" >&2
+  exit 2
+elif [ "${#args[@]}" -gt 1 ]; then
+  printf "%s%s%s Error: too many arguments. Expected 1 symlink, got %d\n" "$RED" "$ERR" "$RESET" "${#args[@]}" >&2
   printf "%s%s%s Usage: reef-recall [-v|--verbose] [--suffix=SUFFIX] <symlink>\n" "$YELLOW" "$DOT" "$RESET" >&2
   exit 2
 fi

@@ -70,6 +70,13 @@ EOF
   esac
 done
 
+# reef-plug takes no positional arguments
+if [ "${#args[@]}" -ne 0 ]; then
+  printf "%s%s%s Error: unexpected arguments. reef-plug takes no positional arguments.\n" "$RED" "$ERR" "$RESET" >&2
+  printf "%s%s%s Usage: reef-plug [-v|--verbose] [--suffix=SUFFIX]\n" "$YELLOW" "$DOT" "$RESET" >&2
+  exit 2
+fi
+
 # Portable realpath (works on macOS/BSD and Linux). Resolves to absolute path.
 _realpath() {
   local path="$1"

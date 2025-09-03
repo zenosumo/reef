@@ -69,6 +69,13 @@ EOF
   esac
 done
 
+# reef-unplug takes no positional arguments
+if [ "${#args[@]}" -ne 0 ]; then
+  printf "%s%s%s Error: unexpected arguments. reef-unplug takes no positional arguments.\n" "$RED" "$ERR" "$RESET" >&2
+  printf "%s%s%s Usage: reef-unplug [-v|--verbose] [--suffix=SUFFIX]\n" "$YELLOW" "$DOT" "$RESET" >&2
+  exit 2
+fi
+
 # Practical realpath that works for our use case
 _realpath() {
   local path="$1"

@@ -98,8 +98,13 @@ EOF
   esac
 done
 
-if [ "${#args[@]}" -ne 1 ]; then
-  printf "%s%s Usage:%s reef-kick [-v|--verbose] <path-inside-project>\n" "$YELLOW" "$DOT" "$RESET" >&2
+if [ "${#args[@]}" -eq 0 ]; then
+  printf "%s%s%s Error: missing required argument <path-inside-project>\n" "$RED" "$ERR" "$RESET" >&2
+  printf "%s%s%s Usage: reef-kick [-v|--verbose] <path-inside-project>\n" "$YELLOW" "$DOT" "$RESET" >&2
+  exit 2
+elif [ "${#args[@]}" -gt 1 ]; then
+  printf "%s%s%s Error: too many arguments. Expected 1 path, got %d\n" "$RED" "$ERR" "$RESET" "${#args[@]}" >&2
+  printf "%s%s%s Usage: reef-kick [-v|--verbose] <path-inside-project>\n" "$YELLOW" "$DOT" "$RESET" >&2
   exit 2
 fi
 
