@@ -53,7 +53,10 @@ setup_tty_detection() {
     # Arrow symbols
     ARROW_RX="→"
     ARROW_LX="←"
+    TRIANGLE_RX="▶"
+    TRIANGLE_LX="◀"
     CONNECT="━"
+    CONNECT_DASH="╌"
     
     # File type icons
     FILE_ICON="📄"
@@ -74,7 +77,10 @@ setup_tty_detection() {
     # Plain text arrows
     ARROW_RX="->"
     ARROW_LX="<-"
+    TRIANGLE_RX=">"
+    TRIANGLE_LX="<"
     CONNECT="-"
+    CONNECT_DASH="-"
     
     # Plain text file type indicators
     FILE_ICON="[F]"
@@ -474,10 +480,10 @@ cmd_kick() {
     [[ $name_len -lt 10 ]] && name_len=10
     connection_line=""
     for ((i=0; i<name_len; i++)); do
-      connection_line+="━"
+      connection_line+="$CONNECT"
     done
     
-    printf "🔗 %-*s ●%s▶ %s %s/%s\n" $name_len "$rel_path" "$connection_line" "$icon" "$twin_name_only" "$rel_path"
+    printf "%s %-*s %s%s%s %s %s/%s\n" "$LINK_ICON" $name_len "$rel_path" "$DOT" "$connection_line" "$TRIANGLE_RX" "$icon" "$twin_name_only" "$rel_path"
   fi
 }
 
@@ -683,7 +689,7 @@ cmd_status() {
   # Calculate connection line length - fixed width based on longest filename
   local connection_line=""
   for ((i=0; i<max_len; i++)); do
-    connection_line+="━"
+    connection_line+="$CONNECT"
   done
   
   # Check if there are any items to display
@@ -785,19 +791,669 @@ cmd_status() {
   fi
 }
 
+# =============================================================================
+# SUBCOMMAND: PLUG
+# =============================================================================
+
+plug_show_help() {
+  cat <<EOF
+reef plug — link files/dirs from the twin folder into the base folder
+
+Usage:
+  reef plug [-v|--verbose]
+
+Options:
+  -v, --verbose    Show detailed output for each operation
+  -h, --help       Show this help
+
+Examples:
+  reef plug
+  reef plug --verbose
+
+Notes:
+  - Creates symlinks in base directory for all files/directories in twin
+  - Skips items that already exist in base (unless already correctly linked)
+  - Idempotent: safe to run multiple times
+  - Requires write permission on base directory
+EOF
+}
+
 cmd_plug() {
-  printf "reef plug: Not yet implemented\n" >&2
-  exit 1
+  # Local variables for plug subcommand
+  local verbose=0
+  local show_help=0
+  local args=()
+  
+  # Parse plug-specific arguments
+  for arg in "$@"; do
+    case "$arg" in
+      -v|--verbose)
+        verbose=1
+        ;;
+      -h|--help)
+        show_help=1
+        ;;
+      -*)
+        print_error "plug: unknown option: $arg"
+        printf "Run 'reef plug --help' for usage information.\n" >&2
+        exit 2
+        ;;
+      *)
+        args+=("$arg")
+        ;;
+    esac
+  done
+  
+  # Show help if requested
+  if [[ $show_help -eq 1 ]]; then
+    plug_show_help
+    exit 0
+  fi
+  
+  # reef-plug takes no positional arguments
+  if [[ ${#args[@]} -ne 0 ]]; then
+    print_error "plug: unexpected arguments. reef plug takes no positional arguments."
+    printf "Usage: reef plug [-v|--verbose]\n" >&2
+    exit 2
+  fi
+  
+  # BASE/TWIN should already be set by main() calling detect_base_twin()
+  # Validate BASE exists
+  if [[ ! -d "$BASE" ]]; then
+    print_error "plug: Base folder not found: $BASE"
+    exit 1
+  fi
+  
+  # Twin folder missing → warning and exit gracefully
+  if [[ ! -d "$TWIN" ]]; then
+    print_warning "plug: Twin '$SUFFIX' folder not found: $TWIN"
+    exit 0
+  fi
+  
+  # Check write permissions on base directory
+  if [[ ! -w "$BASE" ]]; then
+    print_error "plug: No write permission on base directory: $BASE"
+    exit 1
+  fi
+  
+  if [[ $verbose -eq 1 ]]; then
+    printf "Linking from: %s%s%s\n" "$DIM" "$TWIN" "$RESET"
+    printf "Into base:    %s%s%s\n\n" "$DIM" "$BASE" "$RESET"
+  fi
+  
+  # Store original shell options
+  local original_shopt
+  original_shopt=$(shopt -p dotglob nullglob 2>/dev/null || true)
+  
+  # Collect all filenames first to calculate max length
+  shopt -s dotglob nullglob
+  local all_names=()
+  local src name
+  
+  for src in "$TWIN"/*; do
+    name="$(basename -- "$src")"
+    [[ "$name" == "." || "$name" == ".." ]] && continue
+    all_names+=("$name")
+  done
+  
+  # Calculate maximum filename length for alignment
+  local max_len=0 len
+  if [[ ${#all_names[@]} -gt 0 ]]; then
+    for name in "${all_names[@]}"; do
+      len=${#name}
+      [[ $len -gt $max_len ]] && max_len=$len
+    done
+  fi
+  
+  # Ensure minimum width for alignment
+  [[ $max_len -lt 10 ]] && max_len=10
+  
+  # Calculate connection line length - fixed width based on longest filename
+  local connection_line=""
+  local i
+  for ((i=0; i<max_len; i++)); do
+    connection_line+="$CONNECT"
+  done
+  
+  # Link each top-level item from TWIN into BASE
+  local created=0 had_any=0 dst icon
+  
+  for src in "$TWIN"/*; do
+    had_any=1
+    name="$(basename -- "$src")"
+    dst="$BASE/$name"
+
+    [[ "$name" == "." || "$name" == ".." ]] && continue
+
+    # Determine if it's a file or folder
+    if [[ -d "$src" ]]; then
+      icon="$FOLDER_ICON"
+    else
+      icon="$FILE_ICON"
+    fi
+
+    if [[ -L "$dst" ]]; then
+      # Check if it's pointing to our twin (idempotent behavior)
+      if [[ "$(readlink "$dst")" == "$src" ]]; then
+        if [[ $verbose -eq 1 ]]; then
+          printf "%s%s%s %s %s(already linked correctly)%s\n" "$DIM" "$OK" "$RESET" "$name" "$DIM" "$RESET"
+        fi
+        # Concise: show already linked with fixed width
+        if [[ $verbose -eq 0 ]]; then
+          printf "%s %-*s %s%s%s %s %s\n" "$LINK_ICON" $max_len "$name" "$DOT" "$connection_line" "$DOT" "$icon" "$name"
+        fi
+      else
+        printf "%s%s%s %s %s(linked to different target)%s\n" "$RED" "$ERR" "$RESET" "$name" "$DIM" "$RESET"
+      fi
+      continue
+    elif [[ -e "$dst" ]]; then
+      printf "%s%s%s %s %s(exists, not a symlink)%s\n" "$RED" "$ERR" "$RESET" "$name" "$DIM" "$RESET"
+      continue
+    fi
+
+    if ln -s "$src" "$dst" 2>/dev/null; then
+      # Verbose: detailed output
+      if [[ $verbose -eq 1 ]]; then
+        printf "%s%s%s %s\n" "$GREEN" "$OK" "$RESET" "$name"
+      fi
+      # Concise: visual link representation with fixed width
+      if [[ $verbose -eq 0 ]]; then
+        printf "%s%s%s %-*s %s%s%s %s %s\n" "$GREEN" "$LINK_ICON" "$RESET" $max_len "$name" "$TRIANGLE_LX" "$connection_line" "$DOT" "$icon" "$name"
+      fi
+      created=$((created+1))
+    else
+      printf "%s%s%s %s %s(link failed)%s\n" "$RED" "$ERR" "$RESET" "$name" "$DIM" "$RESET"
+    fi
+  done
+  
+  # Restore original shell options
+  if [[ -n "$original_shopt" ]]; then
+    eval "$original_shopt"
+  else
+    shopt -u dotglob nullglob 2>/dev/null || true
+  fi
+  
+  if [[ $had_any -eq 0 ]]; then
+    printf "%sNothing to link: %s is empty.%s\n" "$DIM" "$TWIN" "$RESET"
+  fi
+  
+  # Summary only in verbose mode
+  if [[ $verbose -eq 1 ]]; then
+    printf "\nCreated %d link(s).\n" "$created"
+  fi
+}
+
+# =============================================================================
+# SUBCOMMAND: RECALL
+# =============================================================================
+
+recall_show_help() {
+  cat <<EOF
+reef recall — move a file from the twin folder back to base and remove its symlink
+
+Usage:
+  reef recall [-v|--verbose] <symlink>
+
+Options:
+  -v, --verbose    Show detailed output for each operation
+  -h, --help       Show this help
+
+Examples:
+  reef recall myfile
+  reef recall --verbose config/settings.json
+  reef recall src/components/Button.tsx
+
+Notes:
+  - Argument must be a symlink pointing to a file in the twin folder
+  - Moves the target file from twin back to the original location
+  - Removes the symlink after successful move
+  - Includes rollback on failure
+EOF
 }
 
 cmd_recall() {
-  printf "reef recall: Not yet implemented\n" >&2
-  exit 1
+  # Local variables for recall subcommand
+  local verbose=0
+  local show_help=0
+  local args=()
+  
+  # Parse recall-specific arguments
+  for arg in "$@"; do
+    case "$arg" in
+      -v|--verbose)
+        verbose=1
+        ;;
+      -h|--help)
+        show_help=1
+        ;;
+      -*)
+        print_error "recall: unknown option: $arg"
+        printf "Run 'reef recall --help' for usage information.\n" >&2
+        exit 2
+        ;;
+      *)
+        args+=("$arg")
+        ;;
+    esac
+  done
+  
+  # Show help if requested
+  if [[ $show_help -eq 1 ]]; then
+    recall_show_help
+    exit 0
+  fi
+  
+  # Check for required symlink argument
+  if [[ ${#args[@]} -eq 0 ]]; then
+    print_error "recall: missing required argument <symlink>"
+    printf "Usage: reef recall [-v|--verbose] <symlink>\n" >&2
+    exit 2
+  elif [[ ${#args[@]} -gt 1 ]]; then
+    print_error "recall: too many arguments. Expected 1 symlink, got ${#args[@]}"
+    printf "Usage: reef recall [-v|--verbose] <symlink>\n" >&2
+    exit 2
+  fi
+  
+  local symlink_arg="${args[0]}"
+  
+  # BASE/TWIN should already be set by main() calling detect_base_twin()
+  # Validate BASE exists
+  if [[ ! -d "$BASE" ]]; then
+    print_error "recall: Base folder not found: $BASE"
+    exit 1
+  fi
+  
+  # Check write permissions on base directory
+  if [[ ! -w "$BASE" ]]; then
+    print_error "recall: No write permission on base directory: $BASE"
+    exit 1
+  fi
+  
+  # Twin folder missing → error, can't recall from non-existent twin
+  if [[ ! -d "$TWIN" ]]; then
+    print_error "recall: Twin folder not found: $TWIN"
+    exit 1
+  fi
+  
+  # Check write permissions on twin directory
+  if [[ ! -w "$TWIN" ]]; then
+    print_error "recall: No write permission on twin directory: $TWIN"
+    exit 1
+  fi
+  
+  # Resolve symlink path
+  local symlink
+  if [[ "$symlink_arg" = /* ]]; then
+    symlink="$symlink_arg"
+  else
+    symlink="$PWD/$symlink_arg"
+  fi
+  symlink="$(_realpath "$symlink")"
+  
+  # Validations
+  if [[ ! -e "$symlink" && ! -L "$symlink" ]]; then
+    print_error "recall: No such file or symlink: $symlink"
+    exit 1
+  fi
+  
+  # Must be a symlink
+  if [[ ! -L "$symlink" ]]; then
+    print_error "recall: Not a symlink: $symlink"
+    exit 1
+  fi
+  
+  # Get the symlink target
+  local target
+  target="$(readlink "$symlink" 2>/dev/null || true)"
+  if [[ -z "$target" ]]; then
+    print_error "recall: Cannot read symlink target: $symlink"
+    exit 1
+  fi
+  
+  # Resolve target to absolute path if it's relative
+  local abs_target
+  if [[ "$target" == /* ]]; then
+    # Already absolute
+    abs_target="$target"
+  else
+    # Relative - resolve from the directory containing the symlink
+    abs_target="$(_realpath "$(dirname -- "$symlink")/$target")"
+  fi
+  
+  # Check if target is actually in the twin directory
+  case "$abs_target" in
+    "$TWIN"/*)
+      # Good, it's in the twin
+      ;;
+    "$TWIN")
+      # Edge case: symlink points directly to twin directory
+      print_error "recall: Cannot recall directory: $symlink points to twin folder itself"
+      exit 1
+      ;;
+    *)
+      print_error "recall: Symlink does not point to twin folder: $symlink $ARROW_RX $abs_target"
+      exit 1
+      ;;
+  esac
+  
+  # Check if target file actually exists
+  if [[ ! -e "$abs_target" ]]; then
+    print_error "recall: Target file does not exist in twin: $abs_target"
+    exit 1
+  fi
+  
+  # Check if target is readable/moveable
+  if [[ ! -r "$abs_target" ]]; then
+    print_error "recall: Cannot read target file: $abs_target"
+    exit 1
+  fi
+  
+  # Check if we can remove from twin directory
+  local twin_parent
+  twin_parent="$(dirname -- "$abs_target")"
+  if [[ ! -w "$twin_parent" ]]; then
+    print_error "recall: Cannot move file from twin: $twin_parent (no write permission)"
+    exit 1
+  fi
+  
+  # Check if symlink parent directory allows removal
+  local symlink_dir
+  symlink_dir="$(dirname -- "$symlink")"
+  if [[ ! -w "$symlink_dir" ]]; then
+    print_error "recall: Cannot remove symlink from: $symlink_dir (no write permission)"
+    exit 1
+  fi
+  
+  # Verbose progress output
+  if [[ $verbose -eq 1 ]]; then
+    printf "Recalling: %s%s%s\n" "$DIM" "$abs_target" "$RESET"
+    printf "From twin: %s%s%s\n" "$DIM" "$TWIN" "$RESET"
+    printf "To base:   %s%s%s\n" "$DIM" "$symlink" "$RESET"
+    printf "Remove:    %s%s%s\n\n" "$DIM" "$symlink" "$RESET"
+  fi
+  
+  # Remove the symlink first
+  if rm -- "$symlink"; then
+    if [[ $verbose -eq 1 ]]; then
+      printf "%s%s%s Removed symlink: %s\n" "$GREEN" "$OK" "$RESET" "$symlink"
+    fi
+  else
+    print_error "recall: Failed to remove symlink: $symlink"
+    exit 1
+  fi
+  
+  # Move the file from twin back to original location
+  if mv -- "$abs_target" "$symlink"; then
+    # Verbose summary
+    if [[ $verbose -eq 1 ]]; then
+      printf "%s%s%s Recalled $ARROW_LX %s\n" "$GREEN" "$OK" "$RESET" "$abs_target"
+      printf "\n%s%s%s Done.\n" "$GREEN" "$OK" "$RESET"
+    fi
+    
+    # Concise line (default): icon + filename + connection + X + name  
+    if [[ $verbose -eq 0 ]]; then
+      local name icon name_len connection_line
+      name="$(basename "$symlink")"
+      if [[ -d "$symlink" ]]; then
+        icon="$FOLDER_ICON"
+      else
+        icon="$FILE_ICON"
+      fi
+      
+      # Calculate max filename length for consistent alignment with reef-status
+      name_len=${#name}
+      [[ $name_len -lt 10 ]] && name_len=10
+      connection_line=""
+      for ((i=0; i<name_len; i++)); do
+        connection_line+="$CONNECT_DASH"
+      done
+      
+      printf "%s %-*s %s%s%s %s%s%s %s\n" "$icon" $name_len "$name" "$DOT" "$connection_line" "$DOT" "$RED" "$ERR" "$RESET" "$name"
+    fi
+  else
+    print_error "recall: Move failed: $symlink $ARROW_LX $abs_target"
+    
+    # Attempt rollback: recreate the symlink
+    if [[ $verbose -eq 1 ]]; then
+      print_warning "recall: Attempting rollback..."
+    fi
+    
+    set +e  # Allow ln to fail without exiting
+    ln -s -- "$abs_target" "$symlink" 2>/dev/null
+    rollback_status=$?
+    set -e
+    
+    if [[ $rollback_status -eq 0 ]]; then
+      if [[ $verbose -eq 1 ]]; then
+        print_success "recall: Rollback successful: symlink restored at $symlink"
+      fi
+      exit 1
+    else
+      print_error "recall: Rollback failed! File is still at: $abs_target"
+      print_error "recall: You may need to manually recreate symlink: $symlink $ARROW_RX $abs_target"
+      exit 1
+    fi
+  fi
+}
+
+# =============================================================================
+# SUBCOMMAND: UNPLUG
+# =============================================================================
+
+unplug_show_help() {
+  cat <<EOF
+reef unplug — remove symlinks in BASE that point into its twin folder
+
+Usage:
+  reef unplug [-v|--verbose]
+
+Options:
+  -v, --verbose    Show detailed output for each operation
+  -h, --help       Show this help
+
+Examples:
+  reef unplug
+  reef unplug --verbose
+
+Notes:
+  - Removes all symlinks in base directory that point to twin folder
+  - Leaves other symlinks untouched
+  - Works even if twin directory doesn't exist (removes orphaned links)
+  - Requires write permission on base directory
+EOF
 }
 
 cmd_unplug() {
-  printf "reef unplug: Not yet implemented\n" >&2
-  exit 1
+  # Local variables for unplug subcommand
+  local verbose=0
+  local show_help=0
+  local args=()
+  
+  # Parse unplug-specific arguments
+  for arg in "$@"; do
+    case "$arg" in
+      -v|--verbose)
+        verbose=1
+        ;;
+      -h|--help)
+        show_help=1
+        ;;
+      -*)
+        print_error "unplug: unknown option: $arg"
+        printf "Run 'reef unplug --help' for usage information.\n" >&2
+        exit 2
+        ;;
+      *)
+        args+=("$arg")
+        ;;
+    esac
+  done
+  
+  # Show help if requested
+  if [[ $show_help -eq 1 ]]; then
+    unplug_show_help
+    exit 0
+  fi
+  
+  # reef-unplug takes no positional arguments
+  if [[ ${#args[@]} -ne 0 ]]; then
+    print_error "unplug: unexpected arguments. reef unplug takes no positional arguments."
+    printf "Usage: reef unplug [-v|--verbose]\n" >&2
+    exit 2
+  fi
+  
+  # BASE/TWIN should already be set by main() calling detect_base_twin()
+  # Validate BASE exists
+  if [[ ! -d "$BASE" ]]; then
+    print_error "unplug: Base folder not found: $BASE"
+    exit 1
+  fi
+  
+  # Check write permissions on base directory
+  if [[ ! -w "$BASE" ]]; then
+    print_error "unplug: No write permission on base directory: $BASE"
+    exit 1
+  fi
+  
+  # If twin missing -> warn and continue (can still remove orphaned links)
+  if [[ ! -d "$TWIN" ]]; then
+    print_warning "unplug: Twin folder not found: $TWIN"
+    printf "%sWill still check for orphaned links pointing to: %s%s\n\n" "$DIM" "$TWIN" "$RESET"
+  fi
+  
+  if [[ $verbose -eq 1 ]]; then
+    printf "Removing links from: %s%s%s\n" "$DIM" "$BASE" "$RESET"
+    printf "That point to:       %s%s%s\n\n" "$DIM" "$TWIN" "$RESET"
+  fi
+  
+  # Store original shell options
+  local original_shopt
+  original_shopt=$(shopt -p dotglob nullglob 2>/dev/null || true)
+  shopt -s dotglob nullglob
+  
+  # Collect all symlinks first to calculate max length
+  local all_names=()
+  local dst name raw_target resolved_target
+  
+  for dst in "$BASE"/*; do
+    name="$(basename -- "$dst")"
+    [[ "$name" == "." || "$name" == ".." ]] && continue
+    [[ -L "$dst" ]] || continue
+    
+    # Get the raw symlink target
+    raw_target="$(readlink "$dst" 2>/dev/null || true)"
+    if [[ -n "$raw_target" ]]; then
+      # Resolve to absolute path
+      if [[ "$raw_target" == /* ]]; then
+        resolved_target="$raw_target"
+      else
+        resolved_target="$(_realpath "$(dirname -- "$dst")/$raw_target")"
+      fi
+      
+      # Check if target is within twin directory
+      case "$resolved_target" in
+        "$TWIN"|"$TWIN"/*)
+          all_names+=("$name")
+          ;;
+      esac
+    fi
+  done
+  
+  # Calculate maximum filename length for alignment
+  local max_len=0 len
+  if [[ ${#all_names[@]} -gt 0 ]]; then
+    for name in "${all_names[@]}"; do
+      len=${#name}
+      [[ $len -gt $max_len ]] && max_len=$len
+    done
+  fi
+  
+  # Ensure minimum width for alignment
+  [[ $max_len -lt 10 ]] && max_len=10
+  
+  # Calculate connection line length - fixed width based on longest filename
+  local connection_line=""
+  local i
+  for ((i=0; i<max_len; i++)); do
+    connection_line+="╌"
+  done
+  
+  local removed=0 checked_any=0 icon
+  
+  for dst in "$BASE"/*; do
+    checked_any=1
+    name="$(basename -- "$dst")"
+    
+    [[ "$name" == "." || "$name" == ".." ]] && continue
+    [[ -L "$dst" ]] || continue
+
+    # Get the raw symlink target
+    raw_target="$(readlink "$dst" 2>/dev/null || true)"
+    if [[ -z "$raw_target" ]]; then
+      printf "%s%s%s %s %s(cannot read symlink)%s\n" "$RED" "$ERR" "$RESET" "$name" "$DIM" "$RESET"
+      continue
+    fi
+
+    # Resolve to absolute path
+    if [[ "$raw_target" == /* ]]; then
+      # Already absolute
+      resolved_target="$raw_target"
+    else
+      # Relative - resolve from the directory containing the symlink
+      resolved_target="$(_realpath "$(dirname -- "$dst")/$raw_target")"
+    fi
+
+    # Determine if target is a file or folder
+    if [[ -d "$resolved_target" ]]; then
+      icon="$FOLDER_ICON"
+    else
+      icon="$FILE_ICON"
+    fi
+
+    # Check if target is within twin directory
+    case "$resolved_target" in
+      "$TWIN"|"$TWIN"/*)
+        if [[ ! -e "$resolved_target" ]]; then
+          if [[ $verbose -eq 1 ]]; then
+            printf "%s%s%s %s %s(broken link to twin - removing)%s\n" "$YELLOW" "$WARN" "$RESET" "$name" "$DIM" "$RESET"
+          fi
+        fi
+        
+        if rm -f -- "$dst"; then
+          # Verbose: detailed output
+          if [[ $verbose -eq 1 ]]; then
+            printf "%s%s%s %s\n" "$GREEN" "$OK" "$RESET" "$name"
+          fi
+          # Concise: show unlinked with fixed width visual
+          if [[ $verbose -eq 0 ]]; then
+            printf "%s%s%s %-*s %s%s%s %s %s\n" "$RED" "$ERR" "$RESET" $max_len "$name" "$DOT" "$connection_line" "$DOT" "$icon" "$name"
+          fi
+          removed=$((removed+1))
+        else
+          printf "%s%s%s %s %s(remove failed)%s\n" "$RED" "$ERR" "$RESET" "$name" "$DIM" "$RESET"
+        fi
+        ;;
+      *) 
+        # Not pointing to twin - leave it alone
+        ;;
+    esac
+  done
+  
+  # Restore original shell options
+  if [[ -n "$original_shopt" ]]; then
+    eval "$original_shopt"
+  else
+    shopt -u dotglob nullglob 2>/dev/null || true
+  fi
+  
+  if [[ $checked_any -eq 0 ]]; then
+    printf "%sNothing to scan in: %s%s\n" "$DIM" "$BASE" "$RESET"
+  fi
+  
+  # Summary only in verbose mode
+  if [[ $verbose -eq 1 ]]; then
+    printf "\nRemoved %d link(s).\n" "$removed"
+  fi
 }
 
 # =============================================================================
