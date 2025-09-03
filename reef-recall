@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
-# dk-recall — move a file from the twin folder back to base and remove its symlink.
+# reef-recall — move a file from the twin folder back to base and remove its symlink.
 # Usage:
-#   dk-recall <symlink> [--suffix=-dk]
+#   reef-recall <symlink> [--suffix=-reef]
 # Behavior:
 #   - Check that the argument is a symlink pointing to the twin folder.
 #   - Move the target file from twin back to the original location.
@@ -21,7 +21,7 @@ for arg in "$@"; do
     -v|--verbose) verbose=1 ;;
     --) shift; break ;;
     -h|--help)
-      echo "Usage: dk-recall [-v|--verbose] <symlink>"
+      echo "Usage: reef-recall [-v|--verbose] <symlink>"
       exit 0
       ;;
     -*)
@@ -44,7 +44,7 @@ vprintf() {
 # Simple icons
 FILE_ICON="📄"
 FOLDER_ICON="📁"
-SUFFIX="-dk"   # default twin suffix
+SUFFIX="-reef"   # default twin suffix
 
 # Colors/icons
 GREEN="$(printf '\033[32m')"
@@ -75,7 +75,7 @@ done
 
 # Warn if no symlink provided
 if [[ -z "${SYMLINK_ARG:-}" ]]; then
- vprintf "${YELLOW}${WARN}${RESET} A symlink was expected. Usage: dk-recall <symlink> [--suffix=-dk]\n"
+ vprintf "${YELLOW}${WARN}${RESET} A symlink was expected. Usage: reef-recall <symlink> [--suffix=-reef]\n"
  exit 0
 fi
 
