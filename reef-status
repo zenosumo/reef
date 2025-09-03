@@ -8,7 +8,7 @@
 #   - Show unlinked files (twin only, ready to plug)
 #   - Use visual connection diagram with proper alignment
 
-set -u
+set -euo pipefail
 
 # Config
 SUFFIX="-reef"   # default twin suffix

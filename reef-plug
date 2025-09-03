@@ -2,7 +2,7 @@
 # reef-plug — link files/dirs from the twin folder into the base folder.
 # Usage: run from either the base project dir or its twin (default suffix "-reef").
 
-set -u
+set -euo pipefail
 
 # ----- Configuration -----
 SUFFIX="-reef"   # default twin suffix

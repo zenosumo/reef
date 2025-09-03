@@ -91,10 +91,15 @@ All scripts follow consistent patterns that must be maintained:
 
 ## Important Implementation Details
 
-### Shell Settings
-- All scripts use `set -u` (error on undefined variables)
-- reef-kick uses `set -euo pipefail` for stricter error handling
+### Shell Settings - Atomic Operations Guarantee
+- **All scripts use `set -euo pipefail`** for strict error handling
+- This ensures atomic operations: either complete success or clean failure  
+- Components:
+  - `-e` (errexit): Exit immediately on command failure
+  - `-u` (nounset): Exit on undefined variable access
+  - `-o pipefail`: Detect failures in any part of pipelines
 - Handle `dotglob` and `nullglob` with proper restoration
+- For expected failures, use explicit handling: `command || true` or `set +e; command; set -e`
 
 ### Symlink Handling
 - Always resolve symlink targets for comparison
@@ -125,9 +130,10 @@ fi
 
 ### Adding New Scripts
 New scripts should:
-1. Include portable `_realpath` function
-2. Implement TTY detection for colors/symbols
-3. Use consistent BASE/TWIN detection logic
-4. Support `--suffix=` parameter
-5. Provide `--help` output
-6. Follow existing error handling patterns
+1. **Start with `set -euo pipefail`** for atomic operations
+2. Include portable `_realpath` function
+3. Implement TTY detection for colors/symbols
+4. Use consistent BASE/TWIN detection logic
+5. Support `--suffix=` parameter
+6. Provide `--help` output
+7. Follow existing error handling patterns with explicit failure handling where needed

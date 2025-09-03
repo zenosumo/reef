@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # reef-unplug — remove symlinks in BASE that point into its twin folder (configurable suffix)
 
-set -u
+set -euo pipefail
 
 # Config
 SUFFIX="-reef"   # default twin suffix, change if you like

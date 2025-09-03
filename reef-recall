@@ -7,7 +7,7 @@
 #   - Move the target file from twin back to the original location.
 #   - Remove the symlink.
 
-set -u
+set -euo pipefail
 
 # Config
 
@@ -38,7 +38,7 @@ set -- "${parsed_args[@]}"
 # vprintf: only print when verbose
 vprintf() {
   if [ "$verbose" -eq 1 ]; then
-    vprintf "%b" "$1" "${@:2}"
+    printf "%b" "$1" "${@:2}"
   fi
 }
 # Simple icons
