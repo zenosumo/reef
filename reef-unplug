@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
-# dk-unplug — remove symlinks in BASE that point into its twin folder (configurable suffix)
+# reef-unplug — remove symlinks in BASE that point into its twin folder (configurable suffix)
 
 set -u
 
 # Config
-SUFFIX="-dk"   # default twin suffix, change if you like
+SUFFIX="-reef"   # default twin suffix, change if you like
 
 # Colors/icons
 GREEN="$(printf '\033[32m')"
