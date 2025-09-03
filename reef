@@ -303,14 +303,486 @@ EOF
 # (These will be added in subsequent iterations - framework is ready)
 
 # Placeholder subcommand functions - to be implemented
+# =============================================================================
+# SUBCOMMAND: KICK
+# =============================================================================
+
+kick_show_help() {
+  cat <<EOF
+reef kick — move a file/dir into the twin and link it back
+
+Usage:
+  reef kick [-v|--verbose] <path-inside-project>
+
+Options:
+  -v, --verbose    Show detailed multi-line progress output
+  -h, --help       Show this help
+
+Examples:
+  reef kick src/index.ts
+  reef kick --verbose config
+
+Notes:
+  - Run inside your project BASE or its twin directory.
+  - If the twin directory doesn't exist, you'll be asked to create it.
+EOF
+}
+
 cmd_kick() {
-  printf "reef kick: Not yet implemented\n" >&2
-  exit 1
+  # Local variables for kick subcommand
+  local verbose=0
+  local show_help=0
+  local args=()
+  
+  # Parse kick-specific arguments
+  for arg in "$@"; do
+    case "$arg" in
+      -v|--verbose)
+        verbose=1
+        ;;
+      -h|--help)
+        show_help=1
+        ;;
+      -*)
+        print_error "kick: unknown option: $arg"
+        printf "Run 'reef kick --help' for usage information.\n" >&2
+        exit 2
+        ;;
+      *)
+        args+=("$arg")
+        ;;
+    esac
+  done
+  
+  # Show help if requested
+  if [[ $show_help -eq 1 ]]; then
+    kick_show_help
+    exit 0
+  fi
+  
+  # Kick requires exactly one path argument
+  if [[ ${#args[@]} -eq 0 ]]; then
+    print_error "kick: missing required argument <path-inside-project>"
+    printf "Usage: reef kick [-v|--verbose] <path-inside-project>\n" >&2
+    exit 2
+  elif [[ ${#args[@]} -gt 1 ]]; then
+    print_error "kick: too many arguments. Expected 1 path, got ${#args[@]}"
+    printf "Usage: reef kick [-v|--verbose] <path-inside-project>\n" >&2
+    exit 2
+  fi
+  
+  local rel_path="${args[0]}"
+  local src="$BASE/$rel_path"
+  local dest="$TWIN/$rel_path"
+  
+  # Validate source exists
+  if [[ ! -e "$src" ]]; then
+    print_error "kick: not found: $src"
+    exit 1
+  fi
+  
+  # Must not already be a symlink pointing to twin
+  if [[ -L "$src" ]]; then
+    local link_target
+    link_target="$(readlink "$src")"
+    # Normalize relative link target to absolute for comparison
+    if [[ "$link_target" != /* ]]; then
+      link_target="$(cd "$(dirname "$src")" && _realpath "$link_target")"
+    fi
+    # Compute absolute intended destination
+    local abs_dest
+    abs_dest="$(cd "$TWIN" 2>/dev/null && _realpath "$dest" 2>/dev/null || echo "$dest")"
+    if [[ "$link_target" = "$abs_dest" ]]; then
+      print_warning "Already linked: $src → $dest"
+      exit 1
+    fi
+  fi
+  
+  # Ensure twin exists (or create)
+  if [[ ! -d "$TWIN" ]]; then
+    if ask_yes_default_yes "Twin folder does not exist. Create it at: $TWIN?"; then
+      mkdir -p "$TWIN"
+      if [[ $verbose -eq 1 ]]; then
+        printf "Created twin: %s\n" "$TWIN"
+      fi
+    else
+      print_error "kick: twin folder missing: $TWIN"
+      exit 1
+    fi
+  fi
+  
+  # Refuse if destination exists
+  if [[ -e "$dest" ]]; then
+    print_error "kick: target already exists in twin: $dest"
+    exit 1
+  fi
+  
+  # Verbose progress output
+  if [[ $verbose -eq 1 ]]; then
+    printf "Moving:    %s%s%s\n" "$DIM" "$src" "$RESET"
+    printf "To twin:   %s%s%s\n" "$DIM" "$dest" "$RESET"
+    printf "Link back: %s%s%s\n\n" "$DIM" "$src" "$RESET"
+  fi
+  
+  # Ensure parent dir in twin
+  mkdir -p "$(dirname "$dest")"
+  
+  # Move then link; on failure, attempt rollback
+  local mv_status ln_status
+  
+  # Disable errexit for controlled error handling
+  set +e
+  mv "$src" "$dest"
+  mv_status=$?
+  if [[ $mv_status -ne 0 ]]; then
+    print_error "kick: failed to move $src to $dest"
+    set -e
+    exit 1
+  fi
+  
+  ln -s "$(_realpath "$dest")" "$src"
+  ln_status=$?
+  if [[ $ln_status -ne 0 ]]; then
+    # rollback move
+    mv "$dest" "$src" 2>/dev/null
+    print_error "kick: failed to create symlink. Rolled back."
+    set -e
+    exit 1
+  fi
+  set -e
+  
+  # Output results
+  if [[ $verbose -eq 1 ]]; then
+    print_success "Moved $src → $dest"
+    print_success "Linked $src → $dest"
+    printf "\n%s%s%s Done.\n" "$GREEN" "$OK" "$RESET"
+  else
+    # Concise, reef-status-like with fixed-width connection
+    local base_name_only twin_name_only icon name_len connection_line
+    base_name_only="$(basename "$BASE")"
+    twin_name_only="$(basename "$TWIN")"
+    
+    # Determine if it's a file or folder
+    if [[ -d "$dest" ]]; then
+      icon="$FOLDER_ICON"
+    else
+      icon="$FILE_ICON"
+    fi
+    
+    # Calculate connection line length based on filename length (like reef-status)
+    name_len=${#rel_path}
+    [[ $name_len -lt 10 ]] && name_len=10
+    connection_line=""
+    for ((i=0; i<name_len; i++)); do
+      connection_line+="━"
+    done
+    
+    printf "🔗 %-*s ●%s▶ %s %s/%s\n" $name_len "$rel_path" "$connection_line" "$icon" "$twin_name_only" "$rel_path"
+  fi
+}
+
+# =============================================================================
+# SUBCOMMAND: STATUS
+# =============================================================================
+
+status_show_help() {
+  cat <<EOF
+reef status — display the relationship between base and twin folder files
+
+Usage:
+  reef status [-v|--verbose] [--help]
+
+Options:
+  -v, --verbose    Show detailed visual diagram with alignment
+  -h, --help       Show this help
+
+Examples:
+  reef status
+  reef status --verbose
+
+Output:
+  Default: Concise list of files and their status
+  Verbose: Visual diagram showing connections between base and twin
+EOF
 }
 
 cmd_status() {
-  printf "reef status: Not yet implemented\n" >&2  
-  exit 1
+  # Local variables for status subcommand
+  local verbose=0
+  local show_help=0
+  local args=()
+  
+  # Parse status-specific arguments
+  for arg in "$@"; do
+    case "$arg" in
+      -v|--verbose)
+        verbose=1
+        ;;
+      -h|--help)
+        show_help=1
+        ;;
+      -*)
+        print_error "status: unknown option: $arg"
+        printf "Run 'reef status --help' for usage information.\n" >&2
+        exit 2
+        ;;
+      *)
+        args+=("$arg")
+        ;;
+    esac
+  done
+  
+  # Show help if requested
+  if [[ $show_help -eq 1 ]]; then
+    status_show_help
+    exit 0
+  fi
+  
+  # Status takes no positional arguments
+  if [[ ${#args[@]} -ne 0 ]]; then
+    print_error "status: unexpected arguments. reef status takes no positional arguments."
+    printf "Usage: reef status [-v|--verbose]\n" >&2
+    exit 2
+  fi
+  
+  # BASE/TWIN should already be set by main() calling detect_base_twin()
+  # Validate BASE exists
+  if [[ ! -d "$BASE" ]]; then
+    print_error "Base folder not found: $BASE"
+    exit 1
+  fi
+  
+  # Twin folder missing → show empty state
+  if [[ ! -d "$TWIN" ]]; then
+    print_warning "Twin folder not found: $TWIN"
+    printf "%sNo twin workspace initialized.%s\n" "$DIM" "$RESET"
+    exit 0
+  fi
+  
+  # Collect file information
+  local broken_dirs=()
+  local broken_files=()
+  local linked_dirs=()
+  local linked_files=()
+  local unlinked_dirs=()
+  local unlinked_files=()
+  
+  # Store original shell options
+  local original_shopt
+  original_shopt=$(shopt -p dotglob nullglob 2>/dev/null || true)
+  shopt -s dotglob nullglob
+  
+  # Scan BASE for symlinks
+  local item name target abs_target
+  for item in "$BASE"/*; do
+    [[ -e "$item" || -L "$item" ]] || continue
+    
+    name="$(basename -- "$item")"
+    [[ "$name" == "." || "$name" == ".." ]] && continue
+    
+    if [[ -L "$item" ]]; then
+      # It's a symlink, check if it points to twin
+      target="$(readlink "$item" 2>/dev/null || true)"
+      if [[ -n "$target" ]]; then
+        # Resolve to absolute path
+        if [[ "$target" == /* ]]; then
+          abs_target="$target"
+        else
+          abs_target="$(_realpath "$(dirname -- "$item")/$target")"
+        fi
+        
+        # Check if target is in twin directory
+        case "$abs_target" in
+          "$TWIN"|"$TWIN"/*)
+            if [[ -e "$abs_target" ]]; then
+              # Healthy link
+              if [[ -d "$abs_target" ]]; then
+                linked_dirs+=("$name")
+              else
+                linked_files+=("$name")
+              fi
+            else
+              # Broken link
+              if [[ -d "$item" ]] 2>/dev/null; then
+                broken_dirs+=("$name")
+              else
+                broken_files+=("$name")
+              fi
+            fi
+            ;;
+        esac
+      fi
+    fi
+  done
+  
+  # Scan TWIN for files not linked back
+  for item in "$TWIN"/*; do
+    [[ -e "$item" ]] || continue
+    
+    name="$(basename -- "$item")"
+    [[ "$name" == "." || "$name" == ".." ]] && continue
+    
+    # Check if there's a corresponding symlink in BASE
+    local base_item="$BASE/$name"
+    if [[ -L "$base_item" ]]; then
+      # There's a symlink, check if it points to this item
+      target="$(readlink "$base_item" 2>/dev/null || true)"
+      if [[ -n "$target" ]]; then
+        if [[ "$target" == /* ]]; then
+          abs_target="$target"
+        else
+          abs_target="$(_realpath "$(dirname -- "$base_item")/$target")"
+        fi
+        
+        # If it points to this item, it's already in linked arrays
+        if [[ "$abs_target" == "$item" ]]; then
+          continue
+        fi
+      fi
+    fi
+    
+    # Not linked back to base
+    if [[ -d "$item" ]]; then
+      unlinked_dirs+=("$name")
+    else
+      unlinked_files+=("$name")
+    fi
+  done
+  
+  # Restore original shell options
+  if [[ -n "$original_shopt" ]]; then
+    eval "$original_shopt"
+  else
+    shopt -u dotglob nullglob 2>/dev/null || true
+  fi
+  
+  # Calculate maximum filename length for alignment
+  local max_len=0
+  local all_names=()
+  
+  # Safe array concatenation
+  [[ ${#broken_dirs[@]} -gt 0 ]] && all_names+=("${broken_dirs[@]}")
+  [[ ${#broken_files[@]} -gt 0 ]] && all_names+=("${broken_files[@]}")
+  [[ ${#linked_dirs[@]} -gt 0 ]] && all_names+=("${linked_dirs[@]}")
+  [[ ${#linked_files[@]} -gt 0 ]] && all_names+=("${linked_files[@]}")
+  [[ ${#unlinked_dirs[@]} -gt 0 ]] && all_names+=("${unlinked_dirs[@]}")
+  [[ ${#unlinked_files[@]} -gt 0 ]] && all_names+=("${unlinked_files[@]}")
+  
+  if [[ ${#all_names[@]} -gt 0 ]]; then
+    local truncated len
+    for name in "${all_names[@]}"; do
+      truncated="$(_truncate_name "$name")"
+      len=${#truncated}
+      [[ $len -gt $max_len ]] && max_len=$len
+    done
+  fi
+  
+  # Ensure minimum width for alignment
+  [[ $max_len -lt 10 ]] && max_len=10
+  
+  # Calculate connection line length - fixed width based on longest filename
+  local connection_line=""
+  for ((i=0; i<max_len; i++)); do
+    connection_line+="━"
+  done
+  
+  # Check if there are any items to display
+  local total_items=$((${#broken_dirs[@]} + ${#broken_files[@]} + ${#linked_dirs[@]} + ${#linked_files[@]} + ${#unlinked_dirs[@]} + ${#unlinked_files[@]}))
+  
+  if [[ $total_items -eq 0 ]]; then
+    printf "%sNo files found in workspace.%s\n" "$DIM" "$RESET"
+    exit 0
+  fi
+  
+  # Choose output format and execute
+  if [[ $verbose -eq 1 ]]; then
+    # Verbose: show detailed visual diagram
+    printf "Checking links between: %s%s%s\n" "$DIM" "$BASE" "$RESET"
+    printf "And twin directory:     %s%s%s\n\n" "$DIM" "$TWIN" "$RESET"
+
+    # Print broken links first (folders, then files)
+    if [[ ${#broken_dirs[@]} -gt 0 ]]; then
+      for name in "${broken_dirs[@]}"; do
+        printf "%s%s%s %s %s(broken link to twin)%s\n" "$RED" "$ERR" "$RESET" "$name" "$DIM" "$RESET"
+      done
+    fi
+
+    if [[ ${#broken_files[@]} -gt 0 ]]; then
+      for name in "${broken_files[@]}"; do
+        printf "%s%s%s %s %s(broken link to twin)%s\n" "$RED" "$ERR" "$RESET" "$name" "$DIM" "$RESET"
+      done
+    fi
+
+    # Print linked items (folders first, then files)
+    if [[ ${#linked_dirs[@]} -gt 0 ]]; then
+      for name in "${linked_dirs[@]}"; do
+        printf "%s%s%s %s %s(linked to twin)%s\n" "$GREEN" "$OK" "$RESET" "$name" "$DIM" "$RESET"
+      done
+    fi
+
+    if [[ ${#linked_files[@]} -gt 0 ]]; then
+      for name in "${linked_files[@]}"; do
+        printf "%s%s%s %s %s(linked to twin)%s\n" "$GREEN" "$OK" "$RESET" "$name" "$DIM" "$RESET"
+      done
+    fi
+
+    # Print unlinked items (folders first, then files)
+    if [[ ${#unlinked_dirs[@]} -gt 0 ]]; then
+      for name in "${unlinked_dirs[@]}"; do
+        printf "%s%s%s %s %s(unlinked in twin, ready to plug)%s\n" "$YELLOW" "$WARN" "$RESET" "$name" "$DIM" "$RESET"
+      done
+    fi
+
+    if [[ ${#unlinked_files[@]} -gt 0 ]]; then
+      for name in "${unlinked_files[@]}"; do
+        printf "%s%s%s %s %s(unlinked in twin, ready to plug)%s\n" "$YELLOW" "$WARN" "$RESET" "$name" "$DIM" "$RESET"
+      done
+    fi
+
+    # Summary
+    local linked_count=$((${#linked_dirs[@]} + ${#linked_files[@]}))
+    local unlinked_count=$((${#unlinked_dirs[@]} + ${#unlinked_files[@]}))
+    local broken_count=$((${#broken_dirs[@]} + ${#broken_files[@]}))
+    
+    printf "\nStatus: %d linked, %d unlinked, %d broken\n" "$linked_count" "$unlinked_count" "$broken_count"
+  else
+    # Concise: simple list format
+    # Show broken links with skull icon in light red
+    if [[ ${#broken_dirs[@]} -gt 0 ]]; then
+      for name in "${broken_dirs[@]}"; do
+        printf "%s%s %s%s\n" "$LIGHTRED" "$SKULL_ICON" "$name" "$RESET"
+      done
+    fi
+    if [[ ${#broken_files[@]} -gt 0 ]]; then
+      for name in "${broken_files[@]}"; do
+        printf "%s%s %s%s\n" "$LIGHTRED" "$SKULL_ICON" "$name" "$RESET"
+      done
+    fi
+    
+    # Show linked items with concise format in cyan
+    if [[ ${#linked_dirs[@]} -gt 0 ]]; then
+      for name in "${linked_dirs[@]}"; do
+        printf "%s%s %-*s %s%s%s %s %s%s\n" "$CYAN" "$LINK_ICON" $max_len "$name" "$DOT" "$connection_line" "$DOT" "$FOLDER_ICON" "$name" "$RESET"
+      done
+    fi
+    if [[ ${#linked_files[@]} -gt 0 ]]; then
+      for name in "${linked_files[@]}"; do
+        printf "%s%s %-*s %s%s%s %s %s%s\n" "$CYAN" "$LINK_ICON" $max_len "$name" "$DOT" "$connection_line" "$DOT" "$FILE_ICON" "$name" "$RESET"
+      done
+    fi
+    
+    # Show unlinked items (ready to plug) in yellow with dot format
+    if [[ ${#unlinked_dirs[@]} -gt 0 ]]; then
+      for name in "${unlinked_dirs[@]}"; do
+        printf "%s                   %s %s %s%s\n" "$YELLOW" "$DOT" "$FOLDER_ICON" "$name" "$RESET"
+      done
+    fi
+    if [[ ${#unlinked_files[@]} -gt 0 ]]; then
+      for name in "${unlinked_files[@]}"; do
+        printf "%s                   %s %s %s%s\n" "$YELLOW" "$DOT" "$FILE_ICON" "$name" "$RESET"
+      done
+    fi
+  fi
 }
 
 cmd_plug() {
