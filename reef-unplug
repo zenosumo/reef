@@ -3,18 +3,34 @@
 
 set -euo pipefail
 
-# Config
-SUFFIX="-reef"   # default twin suffix, change if you like
+# ----- Configuration -----
+SUFFIX="-reef"   # default twin suffix
 
-# Colors/icons
-GREEN="$(printf '\033[32m')"
-YELLOW="$(printf '\033[33m')"
-RED="$(printf '\033[31m')"
-DIM="$(printf '\033[2m')"
-RESET="$(printf '\033[0m')"
-OK="✓"
-WARN="⚠️"
-FAIL="✗"
+# ----- Colors & symbols (fallback to plain if not a TTY) -----
+is_tty=0
+if [ -t 1 ]; then is_tty=1; fi
+
+if [ "$is_tty" -eq 1 ]; then
+  RED="$(printf '\033[31m')"
+  GREEN="$(printf '\033[32m')"
+  YELLOW="$(printf '\033[33m')"
+  DIM="$(printf '\033[2m')"
+  BOLD="$(printf '\033[1m')"
+  RESET="$(printf '\033[0m')"
+  OK="✓"
+  ERR="✗"
+  DOT="●"
+  ARROW_RX="→"
+  ARROW_LX="←"
+  CONNECT="━"
+  WARN="⚠️"
+  FILE_ICON="📄"
+  FOLDER_ICON="📁"
+  LINK_ICON="🔗"
+else
+  RED=""; GREEN=""; YELLOW=""; DIM=""; BOLD=""; RESET=""
+  OK="[OK]"; ERR="[ERR]"; DOT="*"; ARROW_RX="->"; ARROW_LX="<-"; CONNECT="-"; WARN="[WARN]"; FILE_ICON="[F]"; FOLDER_ICON="[D]"; LINK_ICON="[L]"
+fi
 
 # Support --suffix=foo argument
 for arg in "$@"; do
@@ -70,30 +86,30 @@ fi
 
 # Sanity check: BASE and TWIN shouldn't be the same
 if [[ "$BASE" == "$TWIN" ]]; then
-  printf "${RED}${FAIL}${RESET} Base and twin directories are identical. Check your suffix configuration.\n" >&2
+  printf "%s%s%s Base and twin directories are identical. Check your suffix configuration.\n" "$RED" "$ERR" "$RESET" >&2
   exit 1
 fi
 
 # Base must exist
 if [[ ! -d "$BASE" ]]; then
-  printf "${RED}${FAIL}${RESET} Base folder not found: %s\n" "$BASE" >&2
+  printf "%s%s%s Base folder not found: %s\n" "$RED" "$ERR" "$RESET" "$BASE" >&2
   exit 1
 fi
 
 # Check write permissions on base directory
 if [[ ! -w "$BASE" ]]; then
-  printf "${RED}${FAIL}${RESET} No write permission on base directory: %s\n" "$BASE" >&2
+  printf "%s%s%s No write permission on base directory: %s\n" "$RED" "$ERR" "$RESET" "$BASE" >&2
   exit 1
 fi
 
 # If twin missing -> warn and exit gracefully
 if [[ ! -d "$TWIN" ]]; then
-  printf "${YELLOW}${WARN}${RESET} Twin folder not found: %s\n" "$TWIN"
-  printf "${DIM}Will still check for orphaned links pointing to: %s${RESET}\n\n" "$TWIN"
+  printf "%s%s%s Twin folder not found: %s\n" "$YELLOW" "$WARN" "$RESET" "$TWIN"
+  printf "%sWill still check for orphaned links pointing to: %s%s\n\n" "$DIM" "$TWIN" "$RESET"
 fi
 
-printf "Removing links from: ${DIM}%s${RESET}\n" "$BASE"
-printf "That point to:       ${DIM}%s${RESET}\n\n" "$TWIN"
+printf "Removing links from: %s%s%s\n" "$DIM" "$BASE" "$RESET"
+printf "That point to:       %s%s%s\n\n" "$DIM" "$TWIN" "$RESET"
 
 # Store original shell options
 original_shopt=$(shopt -p dotglob nullglob 2>/dev/null || true)
@@ -112,7 +128,7 @@ for dst in "$BASE"/*; do
   # Get the raw symlink target
   raw_target="$(readlink "$dst" 2>/dev/null || true)"
   if [[ -z "$raw_target" ]]; then
-    printf "${RED}${FAIL}${RESET} %s ${DIM}(cannot read symlink)${RESET}\n" "$name"
+    printf "%s%s%s %s %s(cannot read symlink)%s\n" "$RED" "$ERR" "$RESET" "$name" "$DIM" "$RESET"
     continue
   fi
 
@@ -129,14 +145,14 @@ for dst in "$BASE"/*; do
   case "$resolved_target" in
     "$TWIN"|"$TWIN"/*)
       if [[ ! -e "$resolved_target" ]]; then
-        printf "${YELLOW}${WARN}${RESET} %s ${DIM}(broken link to twin - removing)${RESET}\n" "$name"
+        printf "%s%s%s %s %s(broken link to twin - removing)%s\n" "$YELLOW" "$WARN" "$RESET" "$name" "$DIM" "$RESET"
       fi
       
       if rm -f -- "$dst"; then
-        printf "${GREEN}${OK}${RESET} %s\n" "$name"
+        printf "%s%s%s %s\n" "$GREEN" "$OK" "$RESET" "$name"
         removed=$((removed+1))
       else
-        printf "${RED}${FAIL}${RESET} %s ${DIM}(remove failed)${RESET}\n" "$name"
+        printf "%s%s%s %s %s(remove failed)%s\n" "$RED" "$ERR" "$RESET" "$name" "$DIM" "$RESET"
       fi
       ;;
     *) 
@@ -153,7 +169,7 @@ else
 fi
 
 if [[ $checked_any -eq 0 ]]; then
-  printf "${DIM}Nothing to scan in: %s${RESET}\n" "$BASE"
+  printf "%sNothing to scan in: %s%s\n" "$DIM" "$BASE" "$RESET"
 fi
 
 printf "\nRemoved %d link(s).\n" "$removed"

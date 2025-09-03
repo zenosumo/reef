@@ -41,20 +41,34 @@ vprintf() {
     printf "%b" "$1" "${@:2}"
   fi
 }
-# Simple icons
-FILE_ICON="📄"
-FOLDER_ICON="📁"
+# ----- Configuration -----  
 SUFFIX="-reef"   # default twin suffix
 
-# Colors/icons
-GREEN="$(printf '\033[32m')"
-YELLOW="$(printf '\033[33m')"
-RED="$(printf '\033[31m')"
-DIM="$(printf '\033[2m')"
-RESET="$(printf '\033[0m')"
-OK="✓"
-WARN="⚠️"
-FAIL="✗"
+# ----- Colors & symbols (fallback to plain if not a TTY) -----
+is_tty=0
+if [ -t 1 ]; then is_tty=1; fi
+
+if [ "$is_tty" -eq 1 ]; then
+  RED="$(printf '\033[31m')"
+  GREEN="$(printf '\033[32m')"
+  YELLOW="$(printf '\033[33m')"
+  DIM="$(printf '\033[2m')"
+  BOLD="$(printf '\033[1m')"
+  RESET="$(printf '\033[0m')"
+  OK="✓"
+  ERR="✗"
+  DOT="●"
+  ARROW_RX="→"
+  ARROW_LX="←"
+  CONNECT="━"
+  WARN="⚠️"
+  FILE_ICON="📄"
+  FOLDER_ICON="📁"
+  LINK_ICON="🔗"
+else
+  RED=""; GREEN=""; YELLOW=""; DIM=""; BOLD=""; RESET=""
+  OK="[OK]"; ERR="[ERR]"; DOT="*"; ARROW_RX="->"; ARROW_LX="<-"; CONNECT="-"; WARN="[WARN]"; FILE_ICON="[F]"; FOLDER_ICON="[D]"; LINK_ICON="[L]"
+fi
 
 # Parse flags
 for arg in "$@"; do
@@ -124,31 +138,31 @@ fi
 
 # Sanity check: BASE and TWIN shouldn't be the same
 if [[ "$BASE" == "$TWIN" ]]; then
- printf "${RED}${FAIL}${RESET} Base and twin directories are identical. Check your suffix configuration.\n" >&2
+ printf "%s%s%s Base and twin directories are identical. Check your suffix configuration.\n" "$RED" "$ERR" "$RESET" >&2
  exit 1
 fi
 
 # Base must exist
 if [[ ! -d "$BASE" ]]; then
- printf "${RED}${FAIL}${RESET} Base folder not found: %s\n" "$BASE" >&2
+ printf "%s%s%s Base folder not found: %s\n" "$RED" "$ERR" "$RESET" "$BASE" >&2
  exit 1
 fi
 
 # Check write permissions on base directory
 if [[ ! -w "$BASE" ]]; then
- printf "${RED}${FAIL}${RESET} No write permission on base directory: %s\n" "$BASE" >&2
+ printf "%s%s%s No write permission on base directory: %s\n" "$RED" "$ERR" "$RESET" "$BASE" >&2
  exit 1
 fi
 
 # Twin folder missing → error, can't recall from non-existent twin
 if [[ ! -d "$TWIN" ]]; then
- printf "${RED}${FAIL}${RESET} Twin folder not found: %s\n" "$TWIN" >&2
+ printf "%s%s%s Twin folder not found: %s\n" "$RED" "$ERR" "$RESET" "$TWIN" >&2
  exit 1
 fi
 
 # Check write permissions on twin directory
 if [[ ! -w "$TWIN" ]]; then
- printf "${RED}${FAIL}${RESET} No write permission on twin directory: %s\n" "$TWIN" >&2
+ printf "%s%s%s No write permission on twin directory: %s\n" "$RED" "$ERR" "$RESET" "$TWIN" >&2
  exit 1
 fi
 
@@ -162,20 +176,20 @@ SYMLINK="$(_realpath "$SYMLINK")"
 
 # Validations
 if [[ ! -e "$SYMLINK" && ! -L "$SYMLINK" ]]; then
- printf "${RED}${FAIL}${RESET} No such file or symlink: %s\n" "$SYMLINK" >&2
+ printf "%s%s%s No such file or symlink: %s\n" "$RED" "$ERR" "$RESET" "$SYMLINK" >&2
  exit 1
 fi
 
 # Must be a symlink
 if [[ ! -L "$SYMLINK" ]]; then
- printf "${RED}${FAIL}${RESET} Not a symlink: %s\n" "$SYMLINK" >&2
+ printf "%s%s%s Not a symlink: %s\n" "$RED" "$ERR" "$RESET" "$SYMLINK" >&2
  exit 1
 fi
 
 # Get the symlink target
 TARGET="$(readlink "$SYMLINK" 2>/dev/null || true)"
 if [[ -z "$TARGET" ]]; then
- printf "${RED}${FAIL}${RESET} Cannot read symlink target: %s\n" "$SYMLINK" >&2
+ printf "%s%s%s Cannot read symlink target: %s\n" "$RED" "$ERR" "$RESET" "$SYMLINK" >&2
  exit 1
 fi
 
@@ -195,38 +209,38 @@ case "$ABS_TARGET" in
    ;;
  "$TWIN")
    # Edge case: symlink points directly to twin directory
-   printf "${RED}${FAIL}${RESET} Cannot recall directory: %s points to twin folder itself\n" "$SYMLINK" >&2
+   printf "%s%s%s Cannot recall directory: %s points to twin folder itself\n" "$RED" "$ERR" "$RESET" "$SYMLINK" >&2
    exit 1
    ;;
  *)
-   printf "${RED}${FAIL}${RESET} Symlink does not point to twin folder: %s → %s\n" "$SYMLINK" "$ABS_TARGET" >&2
+   printf "%s%s%s Symlink does not point to twin folder: %s %s %s\n" "$RED" "$ERR" "$RESET" "$SYMLINK" "$ARROW_RX" "$ABS_TARGET" >&2
    exit 1
    ;;
 esac
 
 # Check if target file actually exists
 if [[ ! -e "$ABS_TARGET" ]]; then
- printf "${RED}${FAIL}${RESET} Target file does not exist in twin: %s\n" "$ABS_TARGET" >&2
+ printf "%s%s%s Target file does not exist in twin: %s\n" "$RED" "$ERR" "$RESET" "$ABS_TARGET" >&2
  exit 1
 fi
 
 # Check if target is readable/moveable
 if [[ ! -r "$ABS_TARGET" ]]; then
- printf "${RED}${FAIL}${RESET} Cannot read target file: %s\n" "$ABS_TARGET" >&2
+ printf "%s%s%s Cannot read target file: %s\n" "$RED" "$ERR" "$RESET" "$ABS_TARGET" >&2
  exit 1
 fi
 
 # Check if we can remove from twin directory
 TWIN_PARENT="$(dirname -- "$ABS_TARGET")"
 if [[ ! -w "$TWIN_PARENT" ]]; then
- printf "${RED}${FAIL}${RESET} Cannot move file from twin: %s (no write permission)\n" "$TWIN_PARENT" >&2
+ printf "%s%s%s Cannot move file from twin: %s (no write permission)\n" "$RED" "$ERR" "$RESET" "$TWIN_PARENT" >&2
  exit 1
 fi
 
 # Check if symlink parent directory allows removal
 SYMLINK_DIR="$(dirname -- "$SYMLINK")"
 if [[ ! -w "$SYMLINK_DIR" ]]; then
- printf "${RED}${FAIL}${RESET} Cannot remove symlink from: %s (no write permission)\n" "$SYMLINK_DIR" >&2
+ printf "%s%s%s Cannot remove symlink from: %s (no write permission)\n" "$RED" "$ERR" "$RESET" "$SYMLINK_DIR" >&2
  exit 1
 fi
 
@@ -239,7 +253,7 @@ vprintf "Remove:    ${DIM}%s${RESET}\n\n" "$SYMLINK"
 if rm -- "$SYMLINK"; then
  vprintf "${GREEN}${OK}${RESET} Removed symlink: %s\n" "$SYMLINK"
 else
- printf "${RED}${FAIL}${RESET} Failed to remove symlink: %s\n" "$SYMLINK" >&2
+ printf "%s%s%s Failed to remove symlink: %s\n" "$RED" "$ERR" "$RESET" "$SYMLINK" >&2
  exit 1
 fi
 
@@ -258,7 +272,7 @@ ${GREEN}${OK}${RESET} Done.
 " \
     "$icon" "$name" "$RED" "$RESET" "$name"
 else
- printf "${RED}${FAIL}${RESET} Move failed: %s ← %s\n" "$SYMLINK" "$ABS_TARGET" >&2
+ printf "%s%s%s Move failed: %s %s %s\n" "$RED" "$ERR" "$RESET" "$SYMLINK" "$ARROW_LX" "$ABS_TARGET" >&2
  
  # Attempt rollback: recreate the symlink
  vprintf "${YELLOW}${WARN}${RESET} Attempting rollback...\n"
@@ -266,8 +280,8 @@ else
    vprintf "${GREEN}${OK}${RESET} Rollback successful: symlink restored at %s\n" "$SYMLINK"
    exit 1
  else
-   printf "${RED}${FAIL}${RESET} Rollback failed! File is still at: %s\n" "$ABS_TARGET" >&2
-   printf "${RED}${FAIL}${RESET} You may need to manually recreate symlink: %s → %s\n" "$SYMLINK" "$ABS_TARGET" >&2
+   printf "%s%s%s Rollback failed! File is still at: %s\n" "$RED" "$ERR" "$RESET" "$ABS_TARGET" >&2
+   printf "%s%s%s You may need to manually recreate symlink: %s %s %s\n" "$RED" "$ERR" "$RESET" "$SYMLINK" "$ARROW_RX" "$ABS_TARGET" >&2
    exit 1
  fi
 fi

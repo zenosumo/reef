@@ -10,18 +10,34 @@
 
 set -euo pipefail
 
-# Config
+# ----- Configuration -----
 SUFFIX="-reef"   # default twin suffix
 
-# Colors/icons
-GREEN="$(printf '\033[32m')"
-YELLOW="$(printf '\033[33m')"
-RED="$(printf '\033[31m')"
-DIM="$(printf '\033[2m')"
-RESET="$(printf '\033[0m')"
-OK="✓"
-WARN="⚠️"
-FAIL="✗"
+# ----- Colors & symbols (fallback to plain if not a TTY) -----
+is_tty=0
+if [ -t 1 ]; then is_tty=1; fi
+
+if [ "$is_tty" -eq 1 ]; then
+  RED="$(printf '\033[31m')"
+  GREEN="$(printf '\033[32m')"
+  YELLOW="$(printf '\033[33m')"
+  DIM="$(printf '\033[2m')"
+  BOLD="$(printf '\033[1m')"
+  RESET="$(printf '\033[0m')"
+  OK="✓"
+  ERR="✗"
+  DOT="●"
+  ARROW_RX="→"
+  ARROW_LX="←"
+  CONNECT="━"
+  WARN="⚠️"
+  FILE_ICON="📄"
+  FOLDER_ICON="📁"
+  LINK_ICON="🔗"
+else
+  RED=""; GREEN=""; YELLOW=""; DIM=""; BOLD=""; RESET=""
+  OK="[OK]"; ERR="[ERR]"; DOT="*"; ARROW_RX="->"; ARROW_LX="<-"; CONNECT="-"; WARN="[WARN]"; FILE_ICON="[F]"; FOLDER_ICON="[D]"; LINK_ICON="[L]"
+fi
 
 # Support --suffix=foo
 for arg in "$@"; do
@@ -77,20 +93,20 @@ fi
 
 # Sanity check: BASE and TWIN shouldn't be the same
 if [[ "$BASE" == "$TWIN" ]]; then
- printf "${RED}${FAIL}${RESET} Base and twin directories are identical. Check your suffix configuration.\n" >&2
+ printf "%s%s%s Base and twin directories are identical. Check your suffix configuration.\n" "$RED" "$ERR" "$RESET" >&2
  exit 1
 fi
 
 # Base must exist
 if [[ ! -d "$BASE" ]]; then
- printf "${RED}${FAIL}${RESET} Base folder not found: %s\n" "$BASE" >&2
+ printf "%s%s%s Base folder not found: %s\n" "$RED" "$ERR" "$RESET" "$BASE" >&2
  exit 1
 fi
 
 # Twin folder missing → show empty state
 if [[ ! -d "$TWIN" ]]; then
- printf "${YELLOW}${WARN}${RESET} Twin folder not found: %s\n" "$TWIN"
- printf "${DIM}No twin workspace initialized.${RESET}\n"
+ printf "%s%s%s Twin folder not found: %s\n" "$YELLOW" "$WARN" "$RESET" "$TWIN"
+ printf "%sNo twin workspace initialized.%s\n" "$DIM" "$RESET"
  exit 0
 fi
 
@@ -233,7 +249,7 @@ done
 total_items=$((${#broken_dirs[@]} + ${#broken_files[@]} + ${#linked_dirs[@]} + ${#linked_files[@]} + ${#unlinked_dirs[@]} + ${#unlinked_files[@]}))
 
 if [[ $total_items -eq 0 ]]; then
- printf "${DIM}No files found in workspace.${RESET}\n"
+ printf "%sNo files found in workspace.%s\n" "$DIM" "$RESET"
  exit 0
 fi
 
@@ -241,14 +257,14 @@ fi
 if [[ ${#broken_dirs[@]} -gt 0 ]]; then
  for name in "${broken_dirs[@]}"; do
    truncated="$(_truncate_name "$name")"
-   printf "${RED}📁 %-*s ○${RESET}\n" $max_len "$truncated"
+   printf "%s%s %-*s ○%s\n" "$RED" "$FOLDER_ICON" $max_len "$truncated" "$RESET"
  done
 fi
 
 if [[ ${#broken_files[@]} -gt 0 ]]; then
  for name in "${broken_files[@]}"; do
    truncated="$(_truncate_name "$name")"
-   printf "${RED}📄 %-*s ○${RESET}\n" $max_len "$truncated"
+   printf "%s%s %-*s ○%s\n" "$RED" "$FILE_ICON" $max_len "$truncated" "$RESET"
  done
 fi
 
@@ -256,14 +272,14 @@ fi
 if [[ ${#linked_dirs[@]} -gt 0 ]]; then
  for name in "${linked_dirs[@]}"; do
    truncated="$(_truncate_name "$name")"
-   printf "${GREEN}🔗 %-*s ●%s● 📁 %s${RESET}\n" $max_len "$truncated" "$connection_line" "$truncated"
+   printf "%s%s %-*s %s%s%s %s %s%s\n" "$GREEN" "$LINK_ICON" $max_len "$truncated" "$DOT" "$connection_line" "$DOT" "$FOLDER_ICON" "$truncated" "$RESET"
  done
 fi
 
 if [[ ${#linked_files[@]} -gt 0 ]]; then
  for name in "${linked_files[@]}"; do
    truncated="$(_truncate_name "$name")"
-   printf "${GREEN}🔗 %-*s ●%s● 📄 %s${RESET}\n" $max_len "$truncated" "$connection_line" "$truncated"
+   printf "%s%s %-*s %s%s%s %s %s%s\n" "$GREEN" "$LINK_ICON" $max_len "$truncated" "$DOT" "$connection_line" "$DOT" "$FILE_ICON" "$truncated" "$RESET"
  done
 fi
 
@@ -271,13 +287,13 @@ fi
 if [[ ${#unlinked_dirs[@]} -gt 0 ]]; then
  for name in "${unlinked_dirs[@]}"; do
    truncated="$(_truncate_name "$name")"
-   printf "${YELLOW}%*s● 📁 %s${RESET}\n" $((max_len + connection_padding + 2)) "" "$truncated"
+   printf "%s%*s%s %s %s%s\n" "$YELLOW" $((max_len + connection_padding + 2)) "" "$DOT" "$FOLDER_ICON" "$truncated" "$RESET"
  done
 fi
 
 if [[ ${#unlinked_files[@]} -gt 0 ]]; then
  for name in "${unlinked_files[@]}"; do
    truncated="$(_truncate_name "$name")"
-   printf "${YELLOW}%*s● 📄 %s${RESET}\n" $((max_len + connection_padding + 2)) "" "$truncated"
+   printf "%s%*s%s %s %s%s\n" "$YELLOW" $((max_len + connection_padding + 2)) "" "$DOT" "$FILE_ICON" "$truncated" "$RESET"
  done
 fi
