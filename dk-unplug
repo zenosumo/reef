@@ -1,0 +1,159 @@
+#!/usr/bin/env bash
+# dk-unplug — remove symlinks in BASE that point into its twin folder (configurable suffix)
+
+set -u
+
+# Config
+SUFFIX="-dk"   # default twin suffix, change if you like
+
+# Colors/icons
+GREEN="$(printf '\033[32m')"
+YELLOW="$(printf '\033[33m')"
+RED="$(printf '\033[31m')"
+DIM="$(printf '\033[2m')"
+RESET="$(printf '\033[0m')"
+OK="✓"
+WARN="⚠️"
+FAIL="✗"
+
+# Support --suffix=foo argument
+for arg in "$@"; do
+  case "$arg" in
+    --suffix=*)
+      SUFFIX="${arg#*=}"
+      ;;
+  esac
+done
+
+# Practical realpath that works for our use case
+_realpath() {
+  local path="$1"
+  
+  # Use system realpath with fallback to manual resolution
+  if command -v realpath >/dev/null 2>&1; then
+    realpath -m "$path" 2>/dev/null || echo "$path"
+  else
+    # Make absolute if relative
+    if [[ "$path" != /* ]]; then
+      path="$PWD/$path"
+    fi
+    
+    # Basic cleanup
+    path="${path//\/\///}"  # compress multiple slashes
+    path="${path%/}"        # remove trailing slash
+    [[ -n "$path" ]] || path="/"
+    
+    echo "$path"
+  fi
+}
+
+# Determine BASE and TWIN from current dir with improved logic
+CWD="$(_realpath "$PWD")"
+BASE=""
+TWIN=""
+
+# Check if current directory ends with suffix AND a non-suffix version exists
+if [[ "$CWD" == *"$SUFFIX" ]]; then
+  potential_base="${CWD%$SUFFIX}"
+  # Only treat as twin if the base actually exists
+  if [[ -d "$potential_base" ]]; then
+    TWIN="$CWD"
+    BASE="$(_realpath "$potential_base")"
+  fi
+fi
+
+# If we haven't identified BASE/TWIN yet, assume we're in base
+if [[ -z "$BASE" ]]; then
+  BASE="$CWD"
+  TWIN="$(_realpath "${CWD}${SUFFIX}")"
+fi
+
+# Sanity check: BASE and TWIN shouldn't be the same
+if [[ "$BASE" == "$TWIN" ]]; then
+  printf "${RED}${FAIL}${RESET} Base and twin directories are identical. Check your suffix configuration.\n" >&2
+  exit 1
+fi
+
+# Base must exist
+if [[ ! -d "$BASE" ]]; then
+  printf "${RED}${FAIL}${RESET} Base folder not found: %s\n" "$BASE" >&2
+  exit 1
+fi
+
+# Check write permissions on base directory
+if [[ ! -w "$BASE" ]]; then
+  printf "${RED}${FAIL}${RESET} No write permission on base directory: %s\n" "$BASE" >&2
+  exit 1
+fi
+
+# If twin missing -> warn and exit gracefully
+if [[ ! -d "$TWIN" ]]; then
+  printf "${YELLOW}${WARN}${RESET} Twin folder not found: %s\n" "$TWIN"
+  printf "${DIM}Will still check for orphaned links pointing to: %s${RESET}\n\n" "$TWIN"
+fi
+
+printf "Removing links from: ${DIM}%s${RESET}\n" "$BASE"
+printf "That point to:       ${DIM}%s${RESET}\n\n" "$TWIN"
+
+# Store original shell options
+original_shopt=$(shopt -p dotglob nullglob 2>/dev/null || true)
+
+shopt -s dotglob nullglob
+removed=0
+checked_any=0
+
+for dst in "$BASE"/*; do
+  checked_any=1
+  name="$(basename -- "$dst")"
+  
+  [[ "$name" == "." || "$name" == ".." ]] && continue
+  [[ -L "$dst" ]] || continue
+
+  # Get the raw symlink target
+  raw_target="$(readlink "$dst" 2>/dev/null || true)"
+  if [[ -z "$raw_target" ]]; then
+    printf "${RED}${FAIL}${RESET} %s ${DIM}(cannot read symlink)${RESET}\n" "$name"
+    continue
+  fi
+
+  # Resolve to absolute path
+  if [[ "$raw_target" == /* ]]; then
+    # Already absolute
+    resolved_target="$raw_target"
+  else
+    # Relative - resolve from the directory containing the symlink
+    resolved_target="$(_realpath "$(dirname -- "$dst")/$raw_target")"
+  fi
+
+  # Check if target is within twin directory
+  case "$resolved_target" in
+    "$TWIN"|"$TWIN"/*)
+      if [[ ! -e "$resolved_target" ]]; then
+        printf "${YELLOW}${WARN}${RESET} %s ${DIM}(broken link to twin - removing)${RESET}\n" "$name"
+      fi
+      
+      if rm -f -- "$dst"; then
+        printf "${GREEN}${OK}${RESET} %s\n" "$name"
+        removed=$((removed+1))
+      else
+        printf "${RED}${FAIL}${RESET} %s ${DIM}(remove failed)${RESET}\n" "$name"
+      fi
+      ;;
+    *) 
+      # Not pointing to twin - leave it alone
+      ;;
+  esac
+done
+
+# Restore original shell options
+if [[ -n "$original_shopt" ]]; then
+  eval "$original_shopt"
+else
+  shopt -u dotglob nullglob 2>/dev/null || true
+fi
+
+if [[ $checked_any -eq 0 ]]; then
+  printf "${DIM}Nothing to scan in: %s${RESET}\n" "$BASE"
+fi
+
+printf "\nRemoved %d link(s).\n" "$removed"

@@ -1,0 +1,283 @@
+#!/usr/bin/env bash
+# dk-status — display the relationship between base and twin folder files.
+# Usage:
+#   dk-status [--suffix=-dk]
+# Behavior:
+#   - Show broken symlinks first (most urgent)
+#   - Show linked files (base → twin connections)  
+#   - Show unlinked files (twin only, ready to plug)
+#   - Use visual connection diagram with proper alignment
+
+set -u
+
+# Config
+SUFFIX="-dk"   # default twin suffix
+
+# Colors/icons
+GREEN="$(printf '\033[32m')"
+YELLOW="$(printf '\033[33m')"
+RED="$(printf '\033[31m')"
+DIM="$(printf '\033[2m')"
+RESET="$(printf '\033[0m')"
+OK="✓"
+WARN="⚠️"
+FAIL="✗"
+
+# Support --suffix=foo
+for arg in "$@"; do
+ case "$arg" in
+   --suffix=*)
+     SUFFIX="${arg#*=}"
+     ;;
+ esac
+done
+
+# Practical realpath that works for our use case
+_realpath() {
+ local path="$1"
+ 
+ # Use system realpath with fallback to manual resolution
+ if command -v realpath >/dev/null 2>&1; then
+   realpath -m "$path" 2>/dev/null || echo "$path"
+ else
+   # Make absolute if relative
+   if [[ "$path" != /* ]]; then
+     path="$PWD/$path"
+   fi
+   
+   # Basic cleanup
+   path="${path//\/\///}"  # compress multiple slashes
+   path="${path%/}"        # remove trailing slash
+   [[ -n "$path" ]] || path="/"
+   
+   echo "$path"
+ fi
+}
+
+# Determine BASE and TWIN from current dir with improved logic
+CWD="$(_realpath "$PWD")"
+BASE=""
+TWIN=""
+
+# Check if current directory ends with suffix AND a non-suffix version exists
+if [[ "$CWD" == *"$SUFFIX" ]]; then
+ potential_base="${CWD%$SUFFIX}"
+ # Only treat as twin if the base actually exists
+ if [[ -d "$potential_base" ]]; then
+   TWIN="$CWD"
+   BASE="$(_realpath "$potential_base")"
+ fi
+fi
+
+# If we haven't identified BASE/TWIN yet, assume we're in base
+if [[ -z "$BASE" ]]; then
+ BASE="$CWD"
+ TWIN="$(_realpath "${CWD}${SUFFIX}")"
+fi
+
+# Sanity check: BASE and TWIN shouldn't be the same
+if [[ "$BASE" == "$TWIN" ]]; then
+ printf "${RED}${FAIL}${RESET} Base and twin directories are identical. Check your suffix configuration.\n" >&2
+ exit 1
+fi
+
+# Base must exist
+if [[ ! -d "$BASE" ]]; then
+ printf "${RED}${FAIL}${RESET} Base folder not found: %s\n" "$BASE" >&2
+ exit 1
+fi
+
+# Twin folder missing → show empty state
+if [[ ! -d "$TWIN" ]]; then
+ printf "${YELLOW}${WARN}${RESET} Twin folder not found: %s\n" "$TWIN"
+ printf "${DIM}No twin workspace initialized.${RESET}\n"
+ exit 0
+fi
+
+# Function to truncate filename if longer than 15 chars
+_truncate_name() {
+ local name="$1"
+ if [[ ${#name} -gt 15 ]]; then
+   printf "%.14s…" "$name"
+ else
+   printf "%s" "$name"
+ fi
+}
+
+# Collect file information
+declare -a broken_dirs=()
+declare -a broken_files=()
+declare -a linked_dirs=()  
+declare -a linked_files=()
+declare -a unlinked_dirs=()
+declare -a unlinked_files=()
+
+# Store original shell options
+original_shopt=$(shopt -p dotglob nullglob 2>/dev/null || true)
+shopt -s dotglob nullglob
+
+# Scan BASE for symlinks
+for item in "$BASE"/*; do
+ [[ -e "$item" || -L "$item" ]] || continue
+ 
+ name="$(basename -- "$item")"
+ [[ "$name" == "." || "$name" == ".." ]] && continue
+ 
+ if [[ -L "$item" ]]; then
+   # It's a symlink, check if it points to twin
+   target="$(readlink "$item" 2>/dev/null || true)"
+   if [[ -n "$target" ]]; then
+     # Resolve to absolute path
+     if [[ "$target" == /* ]]; then
+       abs_target="$target"
+     else
+       abs_target="$(_realpath "$(dirname -- "$item")/$target")"
+     fi
+     
+     # Check if target is in twin directory
+     case "$abs_target" in
+       "$TWIN"|"$TWIN"/*)
+         if [[ -e "$abs_target" ]]; then
+           # Healthy link
+           if [[ -d "$abs_target" ]]; then
+             linked_dirs+=("$name")
+           else
+             linked_files+=("$name")
+           fi
+         else
+           # Broken link
+           if [[ -d "$item" ]] 2>/dev/null; then
+             broken_dirs+=("$name")
+           else
+             broken_files+=("$name")
+           fi
+         fi
+         ;;
+     esac
+   fi
+ fi
+done
+
+# Scan TWIN for files not linked back
+for item in "$TWIN"/*; do
+ [[ -e "$item" ]] || continue
+ 
+ name="$(basename -- "$item")"
+ [[ "$name" == "." || "$name" == ".." ]] && continue
+ 
+ # Check if there's a corresponding symlink in BASE
+ base_item="$BASE/$name"
+ if [[ -L "$base_item" ]]; then
+   # There's a symlink, check if it points to this item
+   target="$(readlink "$base_item" 2>/dev/null || true)"
+   if [[ -n "$target" ]]; then
+     if [[ "$target" == /* ]]; then
+       abs_target="$target"
+     else
+       abs_target="$(_realpath "$(dirname -- "$base_item")/$target")"
+     fi
+     
+     # If it points to this item, it's already in linked arrays
+     if [[ "$abs_target" == "$item" ]]; then
+       continue
+     fi
+   fi
+ fi
+ 
+ # Not linked back to base
+ if [[ -d "$item" ]]; then
+   unlinked_dirs+=("$name")
+ else
+   unlinked_files+=("$name")
+ fi
+done
+
+# Restore original shell options
+if [[ -n "$original_shopt" ]]; then
+ eval "$original_shopt"
+else
+ shopt -u dotglob nullglob 2>/dev/null || true
+fi
+
+# Calculate maximum filename length for alignment
+max_len=0
+all_names=()
+
+# Safe array concatenation
+[[ ${#broken_dirs[@]} -gt 0 ]] && all_names+=("${broken_dirs[@]}")
+[[ ${#broken_files[@]} -gt 0 ]] && all_names+=("${broken_files[@]}")
+[[ ${#linked_dirs[@]} -gt 0 ]] && all_names+=("${linked_dirs[@]}")
+[[ ${#linked_files[@]} -gt 0 ]] && all_names+=("${linked_files[@]}")
+[[ ${#unlinked_dirs[@]} -gt 0 ]] && all_names+=("${unlinked_dirs[@]}")
+[[ ${#unlinked_files[@]} -gt 0 ]] && all_names+=("${unlinked_files[@]}")
+
+if [[ ${#all_names[@]} -gt 0 ]]; then
+ for name in "${all_names[@]}"; do
+   truncated="$(_truncate_name "$name")"
+   len=${#truncated}
+   [[ $len -gt $max_len ]] && max_len=$len
+ done
+fi
+
+# Ensure minimum width for alignment
+[[ $max_len -lt 10 ]] && max_len=10
+
+# Calculate connection line length (icon + space + filename + space + bullet)
+connection_padding=4
+connection_line=""
+for ((i=0; i<max_len+connection_padding; i++)); do
+ connection_line+="━"
+done
+
+# Output the status
+total_items=$((${#broken_dirs[@]} + ${#broken_files[@]} + ${#linked_dirs[@]} + ${#linked_files[@]} + ${#unlinked_dirs[@]} + ${#unlinked_files[@]}))
+
+if [[ $total_items -eq 0 ]]; then
+ printf "${DIM}No files found in workspace.${RESET}\n"
+ exit 0
+fi
+
+# Print broken links first (folders, then files)
+if [[ ${#broken_dirs[@]} -gt 0 ]]; then
+ for name in "${broken_dirs[@]}"; do
+   truncated="$(_truncate_name "$name")"
+   printf "${RED}📁 %-*s ○${RESET}\n" $max_len "$truncated"
+ done
+fi
+
+if [[ ${#broken_files[@]} -gt 0 ]]; then
+ for name in "${broken_files[@]}"; do
+   truncated="$(_truncate_name "$name")"
+   printf "${RED}📄 %-*s ○${RESET}\n" $max_len "$truncated"
+ done
+fi
+
+# Print linked items (folders first, then files)
+if [[ ${#linked_dirs[@]} -gt 0 ]]; then
+ for name in "${linked_dirs[@]}"; do
+   truncated="$(_truncate_name "$name")"
+   printf "${GREEN}🔗 %-*s ●%s● 📁 %s${RESET}\n" $max_len "$truncated" "$connection_line" "$truncated"
+ done
+fi
+
+if [[ ${#linked_files[@]} -gt 0 ]]; then
+ for name in "${linked_files[@]}"; do
+   truncated="$(_truncate_name "$name")"
+   printf "${GREEN}🔗 %-*s ●%s● 📄 %s${RESET}\n" $max_len "$truncated" "$connection_line" "$truncated"
+ done
+fi
+
+# Print unlinked items (folders first, then files)
+if [[ ${#unlinked_dirs[@]} -gt 0 ]]; then
+ for name in "${unlinked_dirs[@]}"; do
+   truncated="$(_truncate_name "$name")"
+   printf "${YELLOW}%*s● 📁 %s${RESET}\n" $((max_len + connection_padding + 2)) "" "$truncated"
+ done
+fi
+
+if [[ ${#unlinked_files[@]} -gt 0 ]]; then
+ for name in "${unlinked_files[@]}"; do
+   truncated="$(_truncate_name "$name")"
+   printf "${YELLOW}%*s● 📄 %s${RESET}\n" $((max_len + connection_padding + 2)) "" "$truncated"
+ done
+fi

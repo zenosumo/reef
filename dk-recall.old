@@ -1,0 +1,229 @@
+#!/usr/bin/env bash
+# dk-recall — move a file from the twin folder back to base and remove its symlink.
+# Usage:
+#   dk-recall <symlink> [--suffix=-dk]
+# Behavior:
+#   - Check that the argument is a symlink pointing to the twin folder.
+#   - Move the target file from twin back to the original location.
+#   - Remove the symlink.
+
+set -u
+
+# Config
+SUFFIX="-dk"   # default twin suffix
+
+# Colors/icons
+GREEN="$(printf '\033[32m')"
+YELLOW="$(printf '\033[33m')"
+RED="$(printf '\033[31m')"
+DIM="$(printf '\033[2m')"
+RESET="$(printf '\033[0m')"
+OK="✓"
+WARN="⚠️"
+FAIL="✗"
+
+# Parse flags
+for arg in "$@"; do
+ case "$arg" in
+   --suffix=*) SUFFIX="${arg#*=}";;
+ esac
+done
+
+# Strip flags from $@ to get the first non-flag as the symlink arg
+SYMLINK_ARG=""
+for arg in "$@"; do
+ case "$arg" in
+   --suffix=*) ;;  # skip
+   --*) ;;         # ignore unknown flags for now
+   *) SYMLINK_ARG="$arg"; break;;
+ esac
+done
+
+# Warn if no symlink provided
+if [[ -z "${SYMLINK_ARG:-}" ]]; then
+ printf "${YELLOW}${WARN}${RESET} A symlink was expected. Usage: dk-recall <symlink> [--suffix=-dk]\n"
+ exit 0
+fi
+
+# Practical realpath that works for our use case
+_realpath() {
+ local path="$1"
+ 
+ # Use system realpath with fallback to manual resolution
+ if command -v realpath >/dev/null 2>&1; then
+   realpath -m "$path" 2>/dev/null || echo "$path"
+ else
+   # Make absolute if relative
+   if [[ "$path" != /* ]]; then
+     path="$PWD/$path"
+   fi
+   
+   # Basic cleanup
+   path="${path//\/\///}"  # compress multiple slashes
+   path="${path%/}"        # remove trailing slash
+   [[ -n "$path" ]] || path="/"
+   
+   echo "$path"
+ fi
+}
+
+# Determine BASE and TWIN from current dir with improved logic
+CWD="$(_realpath "$PWD")"
+BASE=""
+TWIN=""
+
+# Check if current directory ends with suffix AND a non-suffix version exists
+if [[ "$CWD" == *"$SUFFIX" ]]; then
+ potential_base="${CWD%$SUFFIX}"
+ # Only treat as twin if the base actually exists
+ if [[ -d "$potential_base" ]]; then
+   TWIN="$CWD"
+   BASE="$(_realpath "$potential_base")"
+ fi
+fi
+
+# If we haven't identified BASE/TWIN yet, assume we're in base
+if [[ -z "$BASE" ]]; then
+ BASE="$CWD"
+ TWIN="$(_realpath "${CWD}${SUFFIX}")"
+fi
+
+# Sanity check: BASE and TWIN shouldn't be the same
+if [[ "$BASE" == "$TWIN" ]]; then
+ printf "${RED}${FAIL}${RESET} Base and twin directories are identical. Check your suffix configuration.\n" >&2
+ exit 1
+fi
+
+# Base must exist
+if [[ ! -d "$BASE" ]]; then
+ printf "${RED}${FAIL}${RESET} Base folder not found: %s\n" "$BASE" >&2
+ exit 1
+fi
+
+# Check write permissions on base directory
+if [[ ! -w "$BASE" ]]; then
+ printf "${RED}${FAIL}${RESET} No write permission on base directory: %s\n" "$BASE" >&2
+ exit 1
+fi
+
+# Twin folder missing → error, can't recall from non-existent twin
+if [[ ! -d "$TWIN" ]]; then
+ printf "${RED}${FAIL}${RESET} Twin folder not found: %s\n" "$TWIN" >&2
+ exit 1
+fi
+
+# Check write permissions on twin directory
+if [[ ! -w "$TWIN" ]]; then
+ printf "${RED}${FAIL}${RESET} No write permission on twin directory: %s\n" "$TWIN" >&2
+ exit 1
+fi
+
+# Resolve symlink path
+if [[ "$SYMLINK_ARG" = /* ]]; then
+ SYMLINK="$SYMLINK_ARG"
+else
+ SYMLINK="$PWD/$SYMLINK_ARG"
+fi
+SYMLINK="$(_realpath "$SYMLINK")"
+
+# Validations
+if [[ ! -e "$SYMLINK" && ! -L "$SYMLINK" ]]; then
+ printf "${RED}${FAIL}${RESET} No such file or symlink: %s\n" "$SYMLINK" >&2
+ exit 1
+fi
+
+# Must be a symlink
+if [[ ! -L "$SYMLINK" ]]; then
+ printf "${RED}${FAIL}${RESET} Not a symlink: %s\n" "$SYMLINK" >&2
+ exit 1
+fi
+
+# Get the symlink target
+TARGET="$(readlink "$SYMLINK" 2>/dev/null || true)"
+if [[ -z "$TARGET" ]]; then
+ printf "${RED}${FAIL}${RESET} Cannot read symlink target: %s\n" "$SYMLINK" >&2
+ exit 1
+fi
+
+# Resolve target to absolute path if it's relative
+if [[ "$TARGET" == /* ]]; then
+ # Already absolute
+ ABS_TARGET="$TARGET"
+else
+ # Relative - resolve from the directory containing the symlink
+ ABS_TARGET="$(_realpath "$(dirname -- "$SYMLINK")/$TARGET")"
+fi
+
+# Check if target is actually in the twin directory
+case "$ABS_TARGET" in
+ "$TWIN"/*)
+   # Good, it's in the twin
+   ;;
+ "$TWIN")
+   # Edge case: symlink points directly to twin directory
+   printf "${RED}${FAIL}${RESET} Cannot recall directory: %s points to twin folder itself\n" "$SYMLINK" >&2
+   exit 1
+   ;;
+ *)
+   printf "${RED}${FAIL}${RESET} Symlink does not point to twin folder: %s → %s\n" "$SYMLINK" "$ABS_TARGET" >&2
+   exit 1
+   ;;
+esac
+
+# Check if target file actually exists
+if [[ ! -e "$ABS_TARGET" ]]; then
+ printf "${RED}${FAIL}${RESET} Target file does not exist in twin: %s\n" "$ABS_TARGET" >&2
+ exit 1
+fi
+
+# Check if target is readable/moveable
+if [[ ! -r "$ABS_TARGET" ]]; then
+ printf "${RED}${FAIL}${RESET} Cannot read target file: %s\n" "$ABS_TARGET" >&2
+ exit 1
+fi
+
+# Check if we can remove from twin directory
+TWIN_PARENT="$(dirname -- "$ABS_TARGET")"
+if [[ ! -w "$TWIN_PARENT" ]]; then
+ printf "${RED}${FAIL}${RESET} Cannot move file from twin: %s (no write permission)\n" "$TWIN_PARENT" >&2
+ exit 1
+fi
+
+# Check if symlink parent directory allows removal
+SYMLINK_DIR="$(dirname -- "$SYMLINK")"
+if [[ ! -w "$SYMLINK_DIR" ]]; then
+ printf "${RED}${FAIL}${RESET} Cannot remove symlink from: %s (no write permission)\n" "$SYMLINK_DIR" >&2
+ exit 1
+fi
+
+printf "Recalling: ${DIM}%s${RESET}\n" "$ABS_TARGET"
+printf "From twin: ${DIM}%s${RESET}\n" "$TWIN"
+printf "To base:   ${DIM}%s${RESET}\n" "$SYMLINK"
+printf "Remove:    ${DIM}%s${RESET}\n\n" "$SYMLINK"
+
+# Remove the symlink first
+if rm -- "$SYMLINK"; then
+ printf "${GREEN}${OK}${RESET} Removed symlink: %s\n" "$SYMLINK"
+else
+ printf "${RED}${FAIL}${RESET} Failed to remove symlink: %s\n" "$SYMLINK" >&2
+ exit 1
+fi
+
+# Move the file from twin back to original location
+if mv -- "$ABS_TARGET" "$SYMLINK"; then
+ printf "${GREEN}${OK}${RESET} Recalled ← %s\n" "$ABS_TARGET"
+ printf "\n${GREEN}${OK}${RESET} Done.\n"
+else
+ printf "${RED}${FAIL}${RESET} Move failed: %s ← %s\n" "$SYMLINK" "$ABS_TARGET" >&2
+ 
+ # Attempt rollback: recreate the symlink
+ printf "${YELLOW}${WARN}${RESET} Attempting rollback...\n"
+ if ln -s -- "$ABS_TARGET" "$SYMLINK" 2>/dev/null; then
+   printf "${GREEN}${OK}${RESET} Rollback successful: symlink restored at %s\n" "$SYMLINK"
+   exit 1
+ else
+   printf "${RED}${FAIL}${RESET} Rollback failed! File is still at: %s\n" "$ABS_TARGET" >&2
+   printf "${RED}${FAIL}${RESET} You may need to manually recreate symlink: %s → %s\n" "$SYMLINK" "$ABS_TARGET" >&2
+   exit 1
+ fi
+fi

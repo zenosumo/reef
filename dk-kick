@@ -1,0 +1,209 @@
+#!/usr/bin/env bash
+# dk-kick — move a file/dir from BASE into the TWIN folder and replace it with a symlink.
+# Usage:
+#   dk-kick [-v|--verbose] <path-inside-project>
+# Behavior:
+#   - Run from either BASE or its "-dk" twin.
+#   - If TWIN doesn't exist, interactively offer to create it (default: Yes on Enter).
+#   - Refuse if the target already exists in TWIN.
+#   - Move the source, then create a symlink at the original location pointing to TWIN.
+# Output:
+#   - Default: concise line consistent with dk-status (single green line on success).
+#   - Verbose (-v/--verbose): detailed multi-line progress output (old style).
+#   - Always prints clear error lines on failure and returns non-zero.
+
+set -euo pipefail
+
+# ----- Colors & symbols (fallback to plain if not a TTY) -----
+is_tty=0
+if [ -t 1 ]; then is_tty=1; fi
+
+if [ "$is_tty" -eq 1 ]; then
+  RED="$(printf '\033[31m')"
+  GREEN="$(printf '\033[32m')"
+  YELLOW="$(printf '\033[33m')"
+  DIM="$(printf '\033[2m')"
+  BOLD="$(printf '\033[1m')"
+  RESET="$(printf '\033[0m')"
+  OK="✓"
+  ERR="✗"
+  DOT="●"
+  ARROW="→"
+  CONNECT="━"
+else
+  RED=""; GREEN=""; YELLOW=""; DIM=""; BOLD=""; RESET=""
+  OK="[OK]"; ERR="[ERR]"; DOT="*"; ARROW="->"; CONNECT="-"
+fi
+
+
+# Portable realpath (works on macOS/BSD and Linux). Resolves to absolute path.
+_realpath() {
+  # If absolute, return as-is
+  case "$1" in
+    /*) printf "%s\n" "$1"; return 0;;
+  esac
+  # Build absolute from dirname + basename; resolves existing dirs with -P
+  local dir base
+  dir="$(cd "$(dirname "$1")" 2>/dev/null && pwd -P)" || dir="$(dirname "$1")"
+  base="$(basename "$1")"
+  printf "%s/%s\n" "$dir" "$base"
+}
+verbose=0
+args=()
+
+for a in "$@"; do
+  case "$a" in
+    -v|--verbose) verbose=1 ;;
+    -h|--help)
+      cat <<EOF
+dk-kick — move a file/dir into the -dk twin and link it back
+
+Usage:
+  dk-kick [-v|--verbose] <path-inside-project>
+
+Examples:
+  dk-kick src/index.ts
+  dk-kick --verbose config
+
+Notes:
+  - Run inside your project BASE or its "-dk" twin directory.
+  - If the twin directory doesn't exist, you'll be asked to create it.
+EOF
+      exit 0
+      ;;
+    -*)
+      printf "%s%s Error:%s unknown option: %s\n" "$RED" "$ERR" "$RESET" "$a" >&2
+      exit 2
+      ;;
+    *)
+      args+=("$a")
+      ;;
+  esac
+done
+
+if [ "${#args[@]}" -ne 1 ]; then
+  printf "%s%s Usage:%s dk-kick [-v|--verbose] <path-inside-project>\n" "$YELLOW" "$DOT" "$RESET" >&2
+  exit 2
+fi
+
+# ----- Resolve BASE/TWIN from CWD -----
+CWD="$(pwd)"
+base_name="$(basename "$CWD")"
+if [[ "$base_name" == *"-dk" ]]; then
+  TWIN="$CWD"
+  BASE="${CWD%-dk}"
+else
+  BASE="$CWD"
+  TWIN="${BASE}-dk"
+fi
+
+REL_PATH="${args[0]}"
+SRC="$BASE/$REL_PATH"
+DEST="$TWIN/$REL_PATH"
+
+# ----- Helpers -----
+vprintf() {
+  if [ "$verbose" -eq 1 ]; then printf "%b" "$1"; fi
+}
+
+ask_yes_default_yes() {
+  # prints prompt to stderr, reads from tty if available
+  local prompt="$1"
+  local reply
+  if [ -t 0 ]; then
+    read -r -p "$prompt [Y/n] " reply
+  else
+    reply="y"
+  fi
+  case "$reply" in
+    [nN]*) return 1 ;;
+    *) return 0 ;;
+  esac
+}
+
+# ----- Guards -----
+if [ ! -e "$SRC" ]; then
+  printf "%s%s Error:%s not found: %s\n" "$RED" "$ERR" "$RESET" "$SRC" >&2
+  exit 1
+fi
+
+# Must not already be a symlink pointing to twin
+if [ -L "$SRC" ]; then
+  link_target="$(readlink "$SRC")"
+  # Normalize relative link target to absolute for comparison
+  if [[ "$link_target" != /* ]]; then
+    link_target="$(cd "$(dirname "$SRC")" && realpath -m "$link_target")"
+  fi
+  # Compute absolute intended destination
+  abs_dest="$(cd "$TWIN" 2>/dev/null && _realpath "$DEST" 2>/dev/null || echo "$DEST")"
+  if [ "$link_target" = "$abs_dest" ]; then
+    printf "%s%s Already linked:%s %s %s %s\n" "$YELLOW" "$DOT" "$RESET" "$SRC" "$ARROW" "$DEST" >&2
+    exit 1
+  fi
+fi
+
+# Ensure twin exists (or create)
+if [ ! -d "$TWIN" ]; then
+  if ask_yes_default_yes "Twin folder does not exist. Create it at: $TWIN?"; then
+    mkdir -p "$TWIN"
+    vprintf "Created twin: %s\n" "$TWIN"
+  else
+    printf "%s%s Aborted:%s twin folder missing: %s\n" "$RED" "$ERR" "$RESET" "$TWIN" >&2
+    exit 1
+  fi
+fi
+
+# Refuse if destination exists
+if [ -e "$DEST" ]; then
+  printf "%s%s Error:%s target already exists in twin: %s\n" "$RED" "$ERR" "$RESET" "$DEST" >&2
+  exit 1
+fi
+
+# ----- Action -----
+vprintf "Moving: %s\n" "$SRC"
+vprintf "To:     %s\n" "$DEST"
+vprintf "Link:   %s\n" "$SRC"
+
+# Ensure parent dir in twin
+mkdir -p "$(dirname "$DEST")"
+
+# Move then link; on failure, attempt rollback
+tmp_rollback=""
+set +e
+mv "$SRC" "$DEST"
+mv_status=$?
+if [ $mv_status -ne 0 ]; then
+  printf "%s%s Error:%s failed to move %s to %s\n" "$RED" "$ERR" "$RESET" "$SRC" "$DEST" >&2
+  exit 1
+fi
+
+ln -s "$(_realpath "$DEST")" "$SRC"
+ln_status=$?
+if [ $ln_status -ne 0 ]; then
+  # rollback move
+  mv "$DEST" "$SRC" 2>/dev/null
+  printf "%s%s Error:%s failed to create symlink. Rolled back.\n" "$RED" "$ERR" "$RESET" >&2
+  exit 1
+fi
+set -e
+
+# ----- Output -----
+if [ "$verbose" -eq 1 ]; then
+  printf "%s %s Moved %s→%s %s
+" "$GREEN$OK$RESET" "$DIM" "$RESET$SRC " "$DEST" "$DIM$RESET"
+  printf "%s %s Linked %s→%s %s
+" "$GREEN$OK$RESET" "$DIM" "$RESET$SRC " "$DEST" "$DIM$RESET"
+  printf "
+%s Done.%s
+" "$GREEN" "$RESET"
+else
+  # Concise, dk-status-like with swapped arrow and dot (◀━━━●)
+  rel_src="$REL_PATH"
+  rel_dest="$REL_PATH"
+  base_name_only="$(basename "$BASE")"
+  twin_name_only="$(basename "$TWIN")"
+  printf "🔗 %s ◀━━━● %s/%s
+" \
+    "$rel_src" \
+    "$twin_name_only" "$rel_dest"
+fi

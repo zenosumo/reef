@@ -1,0 +1,145 @@
+#!/usr/bin/env bash
+# dk-plug — link files/dirs from the twin folder into the base folder.
+# Usage: run from either the base project dir or its twin (default suffix "-dk").
+
+set -u
+
+# Config
+SUFFIX="-dk"   # default twin suffix
+
+# Colors/icons
+GREEN="$(printf '\033[32m')"   # green
+RED="$(printf '\033[31m')"     # red
+YELLOW="$(printf '\033[33m')"  # yellow
+DIM="$(printf '\033[2m')"      # faint gray
+RESET="$(printf '\033[0m')"    # reset
+OK="✓"
+FAIL="✗"
+WARN="⚠️"
+
+# Support --suffix=foo
+for arg in "$@"; do
+  case "$arg" in
+    --suffix=*)
+      SUFFIX="${arg#*=}"
+      ;;
+  esac
+done
+
+# Resolve real paths
+_realpath() {
+  if command -v realpath >/dev/null 2>&1; then
+    realpath -m "$1"
+  else
+    # Better fallback: try to cd and get pwd, but handle non-existent dirs
+    if [[ -d "$1" ]]; then
+      (cd "$1" && pwd)
+    else
+      # For non-existent paths, try to resolve parent and append basename
+      local parent="$(dirname "$1")"
+      local basename="$(basename "$1")"
+      if [[ -d "$parent" ]]; then
+        echo "$(cd "$parent" && pwd)/$basename"
+      else
+        echo "$1"  # fallback to original
+      fi
+    fi
+  fi
+}
+
+# Figure out BASE and TWIN with better logic
+CWD="$(_realpath "$PWD")"
+BASE=""
+TWIN=""
+
+# Check if current directory ends with suffix AND a non-suffix version exists
+if [[ "$CWD" == *"$SUFFIX" ]]; then
+  potential_base="${CWD%$SUFFIX}"
+  # Only treat as twin if the base actually exists
+  if [[ -d "$potential_base" ]]; then
+    TWIN="$CWD"
+    BASE="$(_realpath "$potential_base")"
+  fi
+fi
+
+# If we haven't identified BASE/TWIN yet, assume we're in base
+if [[ -z "$BASE" ]]; then
+  BASE="$CWD"
+  TWIN="$(_realpath "${CWD}${SUFFIX}")"
+fi
+
+# Sanity check: BASE and TWIN shouldn't be the same
+if [[ "$BASE" == "$TWIN" ]]; then
+  printf "${RED}${FAIL}${RESET} Base and twin directories are identical. Check your suffix configuration.\n" >&2
+  exit 1
+fi
+
+# Base folder must exist
+if [[ ! -d "$BASE" ]]; then
+  printf "${RED}${FAIL}${RESET} Base folder not found: %s\n" "$BASE" >&2
+  exit 1
+fi
+
+# Twin folder missing → yellow warning, quit gracefully  
+if [[ ! -d "$TWIN" ]]; then
+  printf "${YELLOW}${WARN}${RESET} Twin '%s' folder not found: %s\n" "$SUFFIX" "$TWIN"
+  exit 0
+fi
+
+# Check write permissions on base directory
+if [[ ! -w "$BASE" ]]; then
+  printf "${RED}${FAIL}${RESET} No write permission on base directory: %s\n" "$BASE" >&2
+  exit 1
+fi
+
+printf "Linking from: ${DIM}%s${RESET}\n" "$TWIN"
+printf "Into base:    ${DIM}%s${RESET}\n\n" "$BASE"
+
+# Store original shell options
+original_shopt=$(shopt -p dotglob nullglob 2>/dev/null || true)
+
+# Link each top-level item from TWIN into BASE
+shopt -s dotglob nullglob
+created=0
+had_any=0
+
+for src in "$TWIN"/*; do
+  had_any=1
+  name="$(basename -- "$src")"
+  dst="$BASE/$name"
+
+  [[ "$name" == "." || "$name" == ".." ]] && continue
+
+  if [[ -L "$dst" ]]; then
+    # Check if it's pointing to our twin (idempotent behavior)
+    if [[ "$(readlink "$dst")" == "$src" ]]; then
+      printf "${DIM}${OK}${RESET} %s ${DIM}(already linked correctly)${RESET}\n" "$name"
+    else
+      printf "${RED}${FAIL}${RESET} %s ${DIM}(linked to different target)${RESET}\n" "$name"
+    fi
+    continue
+  elif [[ -e "$dst" ]]; then
+    printf "${RED}${FAIL}${RESET} %s ${DIM}(exists, not a symlink)${RESET}\n" "$name"
+    continue
+  fi
+
+  if ln -s "$src" "$dst" 2>/dev/null; then
+    printf "${GREEN}${OK}${RESET} %s\n" "$name"
+    created=$((created+1))
+  else
+    printf "${RED}${FAIL}${RESET} %s ${DIM}(link failed)${RESET}\n" "$name"
+  fi
+done
+
+# Restore original shell options
+if [[ -n "$original_shopt" ]]; then
+  eval "$original_shopt"
+else
+  shopt -u dotglob nullglob 2>/dev/null || true
+fi
+
+if [[ $had_any -eq 0 ]]; then
+  printf "${DIM}Nothing to link: %s is empty.${RESET}\n" "$TWIN"
+fi
+
+printf "\nCreated %d link(s).\n" "$created"

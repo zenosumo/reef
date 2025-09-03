@@ -1,0 +1,584 @@
+#!/usr/bin/env bash
+# reef - Manage project twin directories with symlinks
+# Version: 2.1.0
+
+set -euo pipefail
+
+# Configuration
+SUFFIX="-reef"
+VERBOSE=0
+DEBUG=0
+FORCE=0
+
+# Colors
+if [[ -t 1 ]] && command -v tput >/dev/null 2>&1; then
+    readonly RED=$(tput setaf 1)
+    readonly GREEN=$(tput setaf 2) 
+    readonly YELLOW=$(tput setaf 3)
+    readonly DIM=$(tput dim)
+    readonly RESET=$(tput sgr0)
+else
+    readonly RED="" GREEN="" YELLOW="" DIM="" RESET=""
+fi
+
+# Icons
+readonly OK="[OK]"
+readonly ERR="[ERR]"
+readonly WARN="[WARN]"
+readonly LINK="->"
+readonly FILE="FILE"  
+readonly FOLDER="DIR"
+
+# Utility functions
+error() {
+    printf "%s%s Error:%s %s
+" "$RED" "$ERR" "$RESET" "$1" >&2
+    exit "${2:-1}"
+}
+
+warn() {
+    printf "%s%s Warning:%s %s
+" "$YELLOW" "$WARN" "$RESET" "$1" >&2
+}
+
+success() {
+    printf "%s%s%s %s
+" "$GREEN" "$OK" "$RESET" "$1"
+}
+
+debug() {
+    [[ $DEBUG -eq 1 ]] && printf "[DEBUG] %s
+" "$1" >&2
+}
+
+vprintf() {
+    printf "$@"
+}
+
+ask_yes() {
+    local prompt="$1"
+    [[ $FORCE -eq 1 ]] && return 0
+    
+    local reply
+    read -rp "$prompt [Y/n] " reply
+    case "$reply" in
+        [nN]*) return 1 ;;
+        *) return 0 ;;
+    esac
+}
+
+# Portable realpath
+realpath_portable() {
+    local path="$1"
+    
+    if command -v realpath >/dev/null 2>&1; then
+        realpath "$path" 2>/dev/null && return
+    fi
+    
+    case "$path" in
+        /*) printf '%s
+' "$path" ;;
+        *) printf '%s/%s
+' "$PWD" "$path" ;;
+    esac | sed 's|/\+|/|g; s|/\.$||; s|/$||; s|^$|/|'
+}
+
+# Find BASE and TWIN directories
+resolve_paths() {
+    local cwd base_name
+    cwd="$(realpath_portable "$PWD")"
+    base_name="$(basename "$cwd")"
+    
+    if [[ "$base_name" == *"$SUFFIX" ]]; then
+        local potential_base="${cwd%$SUFFIX}"
+        if [[ -d "$potential_base" ]]; then
+            TWIN="$cwd"
+            BASE="$potential_base"
+        else
+            BASE="$cwd"
+            TWIN="${cwd}${SUFFIX}"
+        fi
+    else
+        BASE="$cwd"
+        TWIN="${cwd}${SUFFIX}"
+    fi
+    
+    [[ -d "$BASE" ]] || error "Base directory not found: $BASE"
+    [[ "$BASE" != "$TWIN" ]] || error "Base and twin paths are identical"
+    
+    debug "BASE: $BASE, TWIN: $TWIN"
+}
+
+# Status command
+cmd_status() {
+    vprintf "Checking status between:
+"
+    vprintf "  Base: %s
+" "$BASE" 
+    vprintf "  Twin: %s
+" "$TWIN"
+    vprintf "
+"
+    
+    if [[ ! -d "$TWIN" ]]; then
+        printf "%sTwin directory not found:%s %s
+" "$DIM" "$RESET" "$TWIN"
+        return 0
+    fi
+    
+    local -a broken_links=()
+    local -a working_links=()  
+    local -a unlinked_items=()
+    
+    shopt -s nullglob dotglob
+    
+    # Scan BASE for symlinks pointing to TWIN
+    local item name target abs_target
+    for item in "$BASE"/*; do
+        [[ -e "$item" || -L "$item" ]] || continue
+        
+        name="$(basename "$item")"
+        [[ "$name" == "." || "$name" == ".." ]] && continue
+        
+        if [[ -L "$item" ]]; then
+            target="$(readlink "$item" 2>/dev/null)" || continue
+            
+            if [[ "$target" != /* ]]; then
+                abs_target="$(realpath_portable "$(dirname "$item")/$target")"
+            else
+                abs_target="$target"
+            fi
+            
+            case "$abs_target" in
+                "$TWIN"|"$TWIN"/*)
+                    if [[ -e "$abs_target" ]]; then
+                        working_links+=("$name")
+                    else
+                        broken_links+=("$name")
+                    fi
+                    ;;
+            esac
+        fi
+    done
+    
+    # Scan TWIN for unlinked items
+    for item in "$TWIN"/*; do
+        [[ -e "$item" ]] || continue
+        
+        name="$(basename "$item")"
+        [[ "$name" == "." || "$name" == ".." || "$name" == ".reef.log" ]] && continue
+        
+        local base_item="$BASE/$name"
+        local is_linked=0
+        
+        if [[ -L "$base_item" ]]; then
+            target="$(readlink "$base_item" 2>/dev/null)" || continue
+            
+            if [[ "$target" != /* ]]; then
+                abs_target="$(realpath_portable "$(dirname "$base_item")/$target")"
+            else
+                abs_target="$target"
+            fi
+            
+            [[ "$abs_target" == "$item" ]] && is_linked=1
+        fi
+        
+        [[ $is_linked -eq 0 ]] && unlinked_items+=("$name")
+    done
+    
+    shopt -u nullglob dotglob
+    
+    # Display results - using safe array expansion
+    local total=$((${#broken_links[@]} + ${#working_links[@]} + ${#unlinked_items[@]}))
+    
+    if [[ $total -eq 0 ]]; then
+        printf "%sNo files found in workspace%s
+" "$DIM" "$RESET"
+        return 0
+    fi
+    
+    # Show broken links first
+    if [[ ${#broken_links[@]} -gt 0 ]]; then
+        for name in "${broken_links[@]}"; do
+            printf "%s%s %s %s(broken link)%s
+" "$RED" "$ERR" "$name" "$DIM" "$RESET"
+        done
+    fi
+    
+    # Show working links
+    if [[ ${#working_links[@]} -gt 0 ]]; then
+        for name in "${working_links[@]}"; do
+            local icon="$FILE"
+            [[ -d "$TWIN/$name" ]] && icon="$FOLDER"
+            printf "%s%s %s ────────────────────────── %s %s
+" "$GREEN" "$LINK" "$name" "$icon" "$name"
+        done
+    fi
+    
+    # Show unlinked items
+    if [[ ${#unlinked_items[@]} -gt 0 ]]; then
+        for name in "${unlinked_items[@]}"; do
+            local icon="$FILE"
+            [[ -d "$TWIN/$name" ]] && icon="$FOLDER"
+            printf "%s%*s %s %s
+" "$YELLOW" 25 "──────────────────────────" "$icon" "$name"
+        done
+    fi
+    
+    printf "
+Summary: %d linked, %d unlinked, %d broken
+" \
+        "${#working_links[@]}" "${#unlinked_items[@]}" "${#broken_links[@]}"
+}
+
+# Plug command
+cmd_plug() {
+    vprintf "Linking from: %s
+" "$TWIN"
+    vprintf "Into base:    %s
+" "$BASE"
+    vprintf "
+"
+    
+    [[ -w "$BASE" ]] || error "No write permission on base directory: $BASE"
+    
+    if [[ ! -d "$TWIN" ]]; then
+        warn "Twin directory not found: $TWIN"
+        return 0
+    fi
+    
+    shopt -s nullglob dotglob
+    
+    local created=0 skipped=0
+    
+    for src in "$TWIN"/*; do
+        [[ -e "$src" ]] || continue
+        
+        local name dst
+        name="$(basename "$src")"
+        dst="$BASE/$name"
+        
+        [[ "$name" == "." || "$name" == ".." || "$name" == ".reef.log" ]] && continue
+        
+        if [[ -L "$dst" ]]; then
+            local existing_target
+            existing_target="$(readlink "$dst" 2>/dev/null)" || continue
+            
+            [[ "$existing_target" != /* ]] && existing_target="$(realpath_portable "$(dirname "$dst")/$existing_target")"
+            
+            if [[ "$existing_target" == "$src" ]]; then
+                vprintf "%s %s (already linked)
+" "$OK" "$name"
+                ((skipped++))
+            else
+                printf "%s%s %s (linked elsewhere)%s
+" "$YELLOW" "$WARN" "$name" "$RESET"
+            fi
+            continue
+        elif [[ -e "$dst" ]]; then
+            printf "%s%s %s (file exists)%s
+" "$RED" "$ERR" "$name" "$RESET"
+            continue
+        fi
+        
+        if ln -s "$src" "$dst" 2>/dev/null; then
+            if [[ $VERBOSE -eq 1 ]]; then
+                success "$name"
+            else
+                local icon="$FILE"
+                [[ -d "$src" ]] && icon="$FOLDER"
+                printf "%s %s ────────────────────────── %s %s
+" "$LINK" "$name" "$icon" "$name"
+            fi
+            ((created++))
+        else
+            printf "%s%s %s (link failed)%s
+" "$RED" "$ERR" "$name" "$RESET"
+        fi
+    done
+    
+    shopt -u nullglob dotglob
+    
+    printf "
+Created %d new links, %d already existed
+" "$created" "$skipped"
+}
+
+# Unplug command
+cmd_unplug() {
+    vprintf "Removing links from: %s
+" "$BASE"
+    vprintf "That point to:       %s
+" "$TWIN"
+    vprintf "
+"
+    
+    [[ -w "$BASE" ]] || error "No write permission on base directory: $BASE"
+    
+    shopt -s nullglob dotglob
+    
+    local removed=0
+    
+    for item in "$BASE"/*; do
+        [[ -L "$item" ]] || continue
+        
+        local name target abs_target
+        name="$(basename "$item")"
+        target="$(readlink "$item" 2>/dev/null)" || continue
+        
+        if [[ "$target" != /* ]]; then
+            abs_target="$(realpath_portable "$(dirname "$item")/$target")"
+        else
+            abs_target="$target"
+        fi
+        
+        case "$abs_target" in
+            "$TWIN"|"$TWIN"/*)
+                if rm "$item" 2>/dev/null; then
+                    if [[ $VERBOSE -eq 1 ]]; then
+                        success "Removed $name"
+                    else
+                        printf "%s%s %s%s
+" "$RED" "$ERR" "$name" "$RESET"
+                    fi
+                    ((removed++))
+                else
+                    printf "%s%s %s (remove failed)%s
+" "$RED" "$ERR" "$name" "$RESET"
+                fi
+                ;;
+        esac
+    done
+    
+    shopt -u nullglob dotglob
+    
+    printf "
+Removed %d links
+" "$removed"
+}
+
+# Kick command
+cmd_kick() {
+    local rel_path="$1"
+    
+    [[ -n "$rel_path" ]] || error "Usage: reef kick <path>"
+    [[ "$rel_path" != /* ]] || error "Use relative paths only"
+    [[ "$rel_path" != *..* ]] || error "Path traversal not allowed"
+    
+    rel_path="${rel_path#./}"
+    [[ "$rel_path" != "." && "$rel_path" != ".." ]] || error "Invalid path"
+    
+    local src="$BASE/$rel_path"
+    local dest="$TWIN/$rel_path"
+    
+    vprintf "Moving: %s
+" "$src"
+    vprintf "To:     %s
+" "$dest"
+    
+    [[ -e "$src" ]] || error "File not found: $src"
+    
+    # Check if already symlinked
+    if [[ -L "$src" ]]; then
+        local current_target
+        current_target="$(readlink "$src" 2>/dev/null)" || error "Cannot read symlink: $src"
+        
+        [[ "$current_target" != /* ]] && current_target="$(realpath_portable "$(dirname "$src")/$current_target")"
+        
+        if [[ "$current_target" == "$dest" ]]; then
+            warn "Already linked: $src → $dest"
+            return 0
+        fi
+    fi
+    
+    # Create twin if needed
+    if [[ ! -d "$TWIN" ]]; then
+        if ask_yes "Twin directory doesn't exist. Create $TWIN?"; then
+            mkdir -p "$TWIN"
+            success "Created twin directory: $TWIN"
+        else
+            error "Operation cancelled"
+        fi
+    fi
+    
+    [[ ! -e "$dest" ]] || error "Target already exists: $dest"
+    
+    # Create parent directory
+    local dest_dir
+    dest_dir="$(dirname "$dest")"
+    [[ -d "$dest_dir" ]] || mkdir -p "$dest_dir"
+    
+    # Move and link with rollback
+    if ! mv "$src" "$dest"; then
+        error "Failed to move $src to $dest"
+    fi
+    
+    if ! ln -s "$dest" "$src"; then
+        mv "$dest" "$src" 2>/dev/null || true
+        error "Failed to create symlink, rolled back"
+    fi
+    
+    # Output
+    if [[ $VERBOSE -eq 1 ]]; then
+        success "Moved and linked: $rel_path"
+    else
+        local icon="$FILE"
+        [[ -d "$dest" ]] && icon="$FOLDER"
+        printf "%s %s ────────────────────────── %s %s
+" "$LINK" "$rel_path" "$icon" "$rel_path"
+    fi
+}
+
+# Recall command
+cmd_recall() {
+    local symlink_path="$1"
+    
+    [[ -n "$symlink_path" ]] || error "Usage: reef recall <symlink>"
+    
+    local abs_symlink
+    if [[ "$symlink_path" == /* ]]; then
+        abs_symlink="$symlink_path"
+    else
+        abs_symlink="$(realpath_portable "$PWD/$symlink_path")"
+    fi
+    
+    vprintf "Recalling: %s
+" "$abs_symlink"
+    
+    [[ -L "$abs_symlink" ]] || error "Not a symlink: $abs_symlink"
+    
+    local target abs_target
+    target="$(readlink "$abs_symlink" 2>/dev/null)" || error "Cannot read symlink: $abs_symlink"
+    
+    if [[ "$target" != /* ]]; then
+        abs_target="$(realpath_portable "$(dirname "$abs_symlink")/$target")"
+    else
+        abs_target="$target"
+    fi
+    
+    vprintf "Target: %s
+" "$abs_target"
+    
+    # Validate target is in our twin
+    case "$abs_target" in
+        "$TWIN"/*)
+            [[ -e "$abs_target" ]] || error "Target file missing: $abs_target"
+            ;;
+        "$TWIN")
+            error "Cannot recall the twin directory itself"
+            ;;
+        *)
+            error "Symlink doesn't point to twin: $abs_symlink → $abs_target"
+            ;;
+    esac
+    
+    # Remove symlink first
+    rm "$abs_symlink" || error "Failed to remove symlink: $abs_symlink"
+    vprintf "Removed symlink
+"
+    
+    # Move file back with rollback
+    if ! mv "$abs_target" "$abs_symlink"; then
+        if ln -s "$abs_target" "$abs_symlink" 2>/dev/null; then
+            error "Move failed, symlink restored"
+        else
+            error "Move failed and rollback failed! File is at: $abs_target"
+        fi
+    fi
+    
+    # Output
+    local name
+    name="$(basename "$abs_symlink")"
+    
+    if [[ $VERBOSE -eq 1 ]]; then
+        success "Recalled: $name"
+    else
+        local icon="$FILE"
+        [[ -d "$abs_symlink" ]] && icon="$FOLDER"
+        printf "%s %s ◄──────────────────────── recalled
+" "$icon" "$name"
+    fi
+}
+
+# Help command
+cmd_help() {
+    cat <<EOF
+reef - Manage project twin directories with symlinks
+
+USAGE:
+  reef [options] <command> [arguments]
+
+COMMANDS:
+  status         Show linking status between base and twin
+  plug           Create symlinks from twin to base
+  unplug         Remove symlinks pointing to twin
+  kick <path>    Move file to twin and create symlink
+  recall <link>  Move file back from twin to base
+  help           Show this help
+
+OPTIONS:
+  -v, --verbose   Show detailed output
+  -d, --debug     Show debug information  
+  -f, --force     Skip confirmation prompts
+  --suffix=SUFFIX Use custom twin suffix (default: $SUFFIX)
+
+EXAMPLES:
+  reef status              # Show current status
+  reef kick src/config.js  # Move config to twin and link
+  reef plug                # Link all twin files to base
+  reef recall config.js    # Move config back to base
+
+NOTES:
+  • Works from either base or twin directory
+  • Default twin suffix: $SUFFIX
+  • Maintains compatibility with existing dk-* tools
+EOF
+}
+
+# Parse arguments
+parse_args() {
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            -v|--verbose) VERBOSE=1; shift ;;
+            -d|--debug) DEBUG=1; shift ;;
+            -f|--force) FORCE=1; shift ;;
+            --suffix=*) SUFFIX="${1#*=}"; [[ -n "$SUFFIX" ]] || error "Empty suffix not allowed"; shift ;;
+            -h|--help) cmd_help; exit 0 ;;
+            --) shift; break ;;
+            -*) error "Unknown option: $1" ;;
+            *) COMMAND="$1"; shift; ARGS=("$@"); break ;;
+        esac
+    done
+}
+
+# Main function
+main() {
+    local COMMAND=""
+    local -a ARGS=()
+    
+    parse_args "$@"
+    
+    [[ -n "$COMMAND" ]] || COMMAND="status"
+    
+    debug "Command: $COMMAND, Args: ${ARGS[*]+"${ARGS[*]}"}, Suffix: $SUFFIX"
+    
+    case "$COMMAND" in
+        status|plug|unplug|kick|recall) resolve_paths ;;
+    esac
+    
+    case "$COMMAND" in
+        status) cmd_status ;;
+        plug) cmd_plug ;;
+        unplug) cmd_unplug ;;
+        kick) [[ ${#ARGS[@]} -eq 1 ]] || error "kick requires exactly one argument"; cmd_kick "${ARGS[0]}" ;;
+        recall) [[ ${#ARGS[@]} -eq 1 ]] || error "recall requires exactly one argument"; cmd_recall "${ARGS[0]}" ;;
+        help) cmd_help ;;
+        *) error "Unknown command: $COMMAND. Try 'reef help'" ;;
+    esac
+}
+
+# Global variables
+BASE=""
+TWIN=""
+
+main "$@"
