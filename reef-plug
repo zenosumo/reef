@@ -4,18 +4,31 @@
 
 set -u
 
-# Config
+# ----- Configuration -----
 SUFFIX="-reef"   # default twin suffix
 
-# Colors/icons
-GREEN="$(printf '\033[32m')"   # green
-RED="$(printf '\033[31m')"     # red
-YELLOW="$(printf '\033[33m')"  # yellow
-DIM="$(printf '\033[2m')"      # faint gray
-RESET="$(printf '\033[0m')"    # reset
-OK="✓"
-FAIL="✗"
-WARN="⚠️"
+# ----- Colors & symbols (fallback to plain if not a TTY) -----
+is_tty=0
+if [ -t 1 ]; then is_tty=1; fi
+
+if [ "$is_tty" -eq 1 ]; then
+  RED="$(printf '\033[31m')"
+  GREEN="$(printf '\033[32m')"
+  YELLOW="$(printf '\033[33m')"
+  DIM="$(printf '\033[2m')"
+  BOLD="$(printf '\033[1m')"
+  RESET="$(printf '\033[0m')"
+  OK="✓"
+  ERR="✗"
+  DOT="●"
+  ARROW_RX="→"
+  ARROW_LX="←"
+  CONNECT="━"
+  WARN="⚠️"
+else
+  RED=""; GREEN=""; YELLOW=""; DIM=""; BOLD=""; RESET=""
+  OK="[OK]"; ERR="[ERR]"; DOT="*"; ARROW_RX="->"; ARROW_LX="<-"; CONNECT="-"; WARN="[WARN]"
+fi
 
 # Support --suffix=foo
 for arg in "$@"; do
@@ -26,24 +39,25 @@ for arg in "$@"; do
   esac
 done
 
-# Resolve real paths
+# Portable realpath (works on macOS/BSD and Linux). Resolves to absolute path.
 _realpath() {
+  local path="$1"
+  
+  # Use system realpath with fallback to manual resolution
   if command -v realpath >/dev/null 2>&1; then
-    realpath -m "$1"
+    realpath -m "$path" 2>/dev/null || echo "$path"
   else
-    # Better fallback: try to cd and get pwd, but handle non-existent dirs
-    if [[ -d "$1" ]]; then
-      (cd "$1" && pwd)
-    else
-      # For non-existent paths, try to resolve parent and append basename
-      local parent="$(dirname "$1")"
-      local basename="$(basename "$1")"
-      if [[ -d "$parent" ]]; then
-        echo "$(cd "$parent" && pwd)/$basename"
-      else
-        echo "$1"  # fallback to original
-      fi
+    # Make absolute if relative
+    if [[ "$path" != /* ]]; then
+      path="$PWD/$path"
     fi
+    
+    # Basic cleanup
+    path="${path//\/\///}"  # compress multiple slashes
+    path="${path%/}"        # remove trailing slash
+    [[ -n "$path" ]] || path="/"
+    
+    echo "$path"
   fi
 }
 
@@ -65,35 +79,35 @@ fi
 # If we haven't identified BASE/TWIN yet, assume we're in base
 if [[ -z "$BASE" ]]; then
   BASE="$CWD"
-  TWIN="$(_realpath "${CWD}${SUFFIX}")"
+  TWIN="${CWD}${SUFFIX}"
 fi
 
 # Sanity check: BASE and TWIN shouldn't be the same
 if [[ "$BASE" == "$TWIN" ]]; then
-  printf "${RED}${FAIL}${RESET} Base and twin directories are identical. Check your suffix configuration.\n" >&2
+  printf "%s%s%s Base and twin directories are identical. Check your suffix configuration.\n" "$RED" "$ERR" "$RESET" >&2
   exit 1
 fi
 
 # Base folder must exist
 if [[ ! -d "$BASE" ]]; then
-  printf "${RED}${FAIL}${RESET} Base folder not found: %s\n" "$BASE" >&2
+  printf "%s%s%s Base folder not found: %s\n" "$RED" "$ERR" "$RESET" "$BASE" >&2
   exit 1
 fi
 
 # Twin folder missing → yellow warning, quit gracefully  
 if [[ ! -d "$TWIN" ]]; then
-  printf "${YELLOW}${WARN}${RESET} Twin '%s' folder not found: %s\n" "$SUFFIX" "$TWIN"
+  printf "%s%s%s Twin '%s' folder not found: %s\n" "$YELLOW" "$WARN" "$RESET" "$SUFFIX" "$TWIN"
   exit 0
 fi
 
 # Check write permissions on base directory
 if [[ ! -w "$BASE" ]]; then
-  printf "${RED}${FAIL}${RESET} No write permission on base directory: %s\n" "$BASE" >&2
+  printf "%s%s%s No write permission on base directory: %s\n" "$RED" "$ERR" "$RESET" "$BASE" >&2
   exit 1
 fi
 
-printf "Linking from: ${DIM}%s${RESET}\n" "$TWIN"
-printf "Into base:    ${DIM}%s${RESET}\n\n" "$BASE"
+printf "Linking from: %s%s%s\n" "$DIM" "$TWIN" "$RESET"
+printf "Into base:    %s%s%s\n\n" "$DIM" "$BASE" "$RESET"
 
 # Store original shell options
 original_shopt=$(shopt -p dotglob nullglob 2>/dev/null || true)
@@ -113,21 +127,21 @@ for src in "$TWIN"/*; do
   if [[ -L "$dst" ]]; then
     # Check if it's pointing to our twin (idempotent behavior)
     if [[ "$(readlink "$dst")" == "$src" ]]; then
-      printf "${DIM}${OK}${RESET} %s ${DIM}(already linked correctly)${RESET}\n" "$name"
+      printf "%s%s%s %s %s(already linked correctly)%s\n" "$DIM" "$OK" "$RESET" "$name" "$DIM" "$RESET"
     else
-      printf "${RED}${FAIL}${RESET} %s ${DIM}(linked to different target)${RESET}\n" "$name"
+      printf "%s%s%s %s %s(linked to different target)%s\n" "$RED" "$ERR" "$RESET" "$name" "$DIM" "$RESET"
     fi
     continue
   elif [[ -e "$dst" ]]; then
-    printf "${RED}${FAIL}${RESET} %s ${DIM}(exists, not a symlink)${RESET}\n" "$name"
+    printf "%s%s%s %s %s(exists, not a symlink)%s\n" "$RED" "$ERR" "$RESET" "$name" "$DIM" "$RESET"
     continue
   fi
 
   if ln -s "$src" "$dst" 2>/dev/null; then
-    printf "${GREEN}${OK}${RESET} %s\n" "$name"
+    printf "%s%s%s %s\n" "$GREEN" "$OK" "$RESET" "$name"
     created=$((created+1))
   else
-    printf "${RED}${FAIL}${RESET} %s ${DIM}(link failed)${RESET}\n" "$name"
+    printf "%s%s%s %s %s(link failed)%s\n" "$RED" "$ERR" "$RESET" "$name" "$DIM" "$RESET"
   fi
 done
 
@@ -139,7 +153,7 @@ else
 fi
 
 if [[ $had_any -eq 0 ]]; then
-  printf "${DIM}Nothing to link: %s is empty.${RESET}\n" "$TWIN"
+  printf "%sNothing to link: %s is empty.%s\n" "$DIM" "$TWIN" "$RESET"
 fi
 
 printf "\nCreated %d link(s).\n" "$created"
