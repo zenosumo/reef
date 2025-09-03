@@ -1,0 +1,386 @@
+#!/usr/bin/env bash
+# reef — unified workspace twin management system
+# 
+# This script consolidates all reef-* commands into a single unified interface:
+# - reef kick <path>      (was reef-kick)
+# - reef status           (was reef-status)  
+# - reef plug             (was reef-plug)
+# - reef recall <symlink> (was reef-recall)
+# - reef unplug           (was reef-unplug)
+#
+# Usage: reef [GLOBAL_OPTIONS] <SUBCOMMAND> [SUBCOMMAND_ARGS...]
+#        reef --help (or no args) shows main help
+#        reef <subcommand> --help shows subcommand help
+
+set -euo pipefail
+
+# =============================================================================
+# 1. VERSION AND CONFIGURATION
+# =============================================================================
+
+VERSION="2.0.0"
+SUFFIX="-reef"   # default twin suffix
+
+# =============================================================================
+# 2. TTY DETECTION AND COLOR VARIABLES
+# =============================================================================
+
+# TTY detection - determines if we're in an interactive terminal
+is_tty=0
+if [ -t 1 ]; then is_tty=1; fi
+
+# Color and symbol setup with fallback for non-TTY environments
+setup_tty_detection() {
+  if [ "$is_tty" -eq 1 ]; then
+    # Full color and Unicode symbols for interactive terminals
+    RED="$(printf '\033[31m')"
+    LIGHTRED="$(printf '\033[91m')"
+    GREEN="$(printf '\033[32m')"
+    YELLOW="$(printf '\033[33m')"
+    BLUE="$(printf '\033[34m')"
+    CYAN="$(printf '\033[36m')"
+    MAGENTA="$(printf '\033[35m')"
+    DIM="$(printf '\033[2m')"
+    BOLD="$(printf '\033[1m')"
+    RESET="$(printf '\033[0m')"
+    
+    # Status symbols
+    OK="✓"
+    ERR="✗"
+    DOT="●"
+    WARN="⚠️"
+    
+    # Arrow symbols
+    ARROW_RX="→"
+    ARROW_LX="←"
+    CONNECT="━"
+    
+    # File type icons
+    FILE_ICON="📄"
+    FOLDER_ICON="📁"
+    LINK_ICON="🔗"
+    SKULL_ICON="💀"
+  else
+    # Plain text fallback for non-interactive environments (CI/CD, pipes, etc.)
+    RED=""; LIGHTRED=""; GREEN=""; YELLOW=""; BLUE=""; CYAN=""; MAGENTA=""
+    DIM=""; BOLD=""; RESET=""
+    
+    # Plain text status symbols
+    OK="[OK]"
+    ERR="[ERR]"
+    DOT="*"
+    WARN="[WARN]"
+    
+    # Plain text arrows
+    ARROW_RX="->"
+    ARROW_LX="<-"
+    CONNECT="-"
+    
+    # Plain text file type indicators
+    FILE_ICON="[F]"
+    FOLDER_ICON="[D]"
+    LINK_ICON="[L]"
+    SKULL_ICON="[BROKEN]"
+  fi
+}
+
+# Initialize TTY detection and colors
+setup_tty_detection
+
+# =============================================================================
+# 3. SHARED UTILITY FUNCTIONS
+# =============================================================================
+
+# Portable realpath function that works on both macOS/BSD and Linux
+# Handles non-existent paths gracefully and resolves to absolute paths
+_realpath() {
+  local path="$1"
+  
+  # Use system realpath with fallback to manual resolution
+  if command -v realpath >/dev/null 2>&1; then
+    realpath -m "$path" 2>/dev/null || echo "$path"
+  else
+    # Make absolute if relative
+    if [[ "$path" != /* ]]; then
+      path="$PWD/$path"
+    fi
+    
+    # Basic cleanup
+    path="${path//\/\///}"  # compress multiple slashes
+    path="${path%/}"        # remove trailing slash
+    [[ -n "$path" ]] || path="/"
+    
+    echo "$path"
+  fi
+}
+
+# Common error handling functions with consistent formatting
+print_error() {
+  local message="$1"
+  printf "%s%s Error:%s %s\n" "$RED" "$ERR" "$RESET" "$message" >&2
+}
+
+print_success() {
+  local message="$1"
+  printf "%s%s%s %s\n" "$GREEN" "$OK" "$RESET" "$message"
+}
+
+print_warning() {
+  local message="$1"
+  printf "%s%s Warning:%s %s\n" "$YELLOW" "$WARN" "$RESET" "$message"
+}
+
+# Helper function for verbose output (only prints when verbose=1)
+vprintf() {
+  if [ "${verbose:-0}" -eq 1 ]; then 
+    printf "%b" "$@"
+  fi
+}
+
+# Ask yes/no question with default to yes (used by reef-kick)
+ask_yes_default_yes() {
+  local prompt="$1"
+  local reply
+  if [ -t 0 ]; then
+    read -r -p "$prompt [Y/n] " reply
+  else
+    reply="y"
+  fi
+  case "$reply" in
+    [nN]*) return 1 ;;
+    *) return 0 ;;
+  esac
+}
+
+# Function to truncate filename if longer than 15 chars (used by reef-status)
+_truncate_name() {
+  local name="$1"
+  if [[ ${#name} -gt 15 ]]; then
+    printf "%.14s…" "$name"
+  else
+    printf "%s" "$name"
+  fi
+}
+
+# =============================================================================
+# 4. BASE/TWIN DETECTION LOGIC
+# =============================================================================
+
+# Global variables for base and twin directories
+BASE=""
+TWIN=""
+
+# Determine BASE and TWIN directories from current working directory
+# This logic is shared across all reef commands
+detect_base_twin() {
+  local cwd suffix
+  cwd="$(_realpath "$PWD")"
+  suffix="${SUFFIX}"
+  
+  BASE=""
+  TWIN=""
+  
+  # Check if current directory ends with suffix AND a non-suffix version exists
+  if [[ "$cwd" == *"$suffix" ]]; then
+    local potential_base="${cwd%$suffix}"
+    # Only treat as twin if the base actually exists
+    if [[ -d "$potential_base" ]]; then
+      TWIN="$cwd"
+      BASE="$(_realpath "$potential_base")"
+    fi
+  fi
+  
+  # If we haven't identified BASE/TWIN yet, assume we're in base
+  if [[ -z "$BASE" ]]; then
+    BASE="$cwd"
+    TWIN="${cwd}${suffix}"
+  fi
+  
+  # Sanity check: BASE and TWIN shouldn't be the same
+  if [[ "$BASE" == "$TWIN" ]]; then
+    print_error "Base and twin directories are identical. Check your suffix configuration."
+    exit 1
+  fi
+}
+
+# =============================================================================
+# 5. GLOBAL ARGUMENT PARSING
+# =============================================================================
+
+# Global variables for command-line options
+verbose=0
+show_help=0
+show_version=0
+args=()
+
+# Parse global arguments (before subcommand)
+parse_global_args() {
+  local parsing_global=1
+  
+  while [[ $# -gt 0 && $parsing_global -eq 1 ]]; do
+    case "$1" in
+      -h|--help)
+        show_help=1
+        shift
+        ;;
+      -v|--version)  
+        show_version=1
+        shift
+        ;;
+      --suffix=*)
+        SUFFIX="${1#*=}"
+        shift
+        ;;
+      --suffix)
+        if [[ $# -lt 2 ]]; then
+          print_error "Option --suffix requires a value"
+          exit 2
+        fi
+        SUFFIX="$2"
+        shift 2
+        ;;
+      -*)
+        # Unknown global option - might be subcommand option, stop global parsing
+        parsing_global=0
+        ;;
+      *)
+        # Non-option argument - this starts subcommand parsing
+        parsing_global=0
+        ;;
+    esac
+  done
+  
+  # Store remaining arguments for subcommand processing
+  args=("$@")
+}
+
+# =============================================================================
+# 6. MAIN HELP SYSTEM AND VERSION DISPLAY
+# =============================================================================
+
+show_version() {
+  printf "reef version %s\n" "$VERSION"
+  printf "Workspace twin management system\n"
+}
+
+show_main_help() {
+  cat <<EOF
+reef - Workspace twin management system
+
+Usage: reef [OPTIONS] <SUBCOMMAND> [ARGS...]
+
+SUBCOMMANDS:
+  kick <path>     Move file/dir to twin and replace with symlink
+  status          Show relationships between base and twin files
+  plug            Create symlinks in base for all twin contents  
+  recall <link>   Move file back from twin to base
+  unplug          Remove all symlinks pointing to twin
+
+GLOBAL OPTIONS:
+  -h, --help           Show this help
+  -v, --version        Show version information
+  --suffix=SUFFIX      Use custom twin suffix (default: -reef)
+
+EXAMPLES:
+  reef kick src/index.js       # Move file to twin
+  reef status --verbose        # Show detailed status
+  reef plug                    # Link all twin files
+  reef recall src/index.js     # Move file back
+  reef unplug                  # Remove all twin links
+
+For help with a specific subcommand: reef <subcommand> --help
+
+Key concepts:
+- BASE: Main project directory (e.g., myproject/)
+- TWIN: Parallel directory with suffix (e.g., myproject-reef/)
+- Files can be moved between BASE and TWIN with automatic symlinking
+EOF
+}
+
+# =============================================================================
+# 7. SUBCOMMAND IMPLEMENTATIONS
+# =============================================================================
+# (These will be added in subsequent iterations - framework is ready)
+
+# Placeholder subcommand functions - to be implemented
+cmd_kick() {
+  printf "reef kick: Not yet implemented\n" >&2
+  exit 1
+}
+
+cmd_status() {
+  printf "reef status: Not yet implemented\n" >&2  
+  exit 1
+}
+
+cmd_plug() {
+  printf "reef plug: Not yet implemented\n" >&2
+  exit 1
+}
+
+cmd_recall() {
+  printf "reef recall: Not yet implemented\n" >&2
+  exit 1
+}
+
+cmd_unplug() {
+  printf "reef unplug: Not yet implemented\n" >&2
+  exit 1
+}
+
+# =============================================================================
+# 8. MAIN DISPATCHER
+# =============================================================================
+
+main() {
+  # Parse global arguments first
+  parse_global_args "$@"
+  
+  # Handle global options
+  if [[ $show_version -eq 1 ]]; then
+    show_version
+    exit 0
+  fi
+  
+  if [[ $show_help -eq 1 ]]; then
+    show_main_help
+    exit 0
+  fi
+  
+  # Handle no-args case (show help)
+  if [[ ${#args[@]} -eq 0 ]]; then
+    show_main_help
+    exit 0
+  fi
+  
+  # Initialize BASE/TWIN detection for subcommands
+  detect_base_twin
+  
+  # Dispatch to subcommand
+  local subcommand="${args[0]}"
+  case "$subcommand" in
+    kick)
+      cmd_kick "${args[@]:1}"
+      ;;
+    status)
+      cmd_status "${args[@]:1}"
+      ;;
+    plug)
+      cmd_plug "${args[@]:1}"
+      ;;
+    recall)
+      cmd_recall "${args[@]:1}"
+      ;;
+    unplug)
+      cmd_unplug "${args[@]:1}"
+      ;;
+    *)
+      print_error "Unknown subcommand: $subcommand"
+      printf "\nRun 'reef --help' to see available subcommands.\n" >&2
+      exit 2
+      ;;
+  esac
+}
+
+# Entry point
+main "$@"
