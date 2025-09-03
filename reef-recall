@@ -37,9 +37,7 @@ set -- "${parsed_args[@]}"
 
 # vprintf: only print when verbose
 vprintf() {
-  if [ "$verbose" -eq 1 ]; then
-    printf "%b" "$1" "${@:2}"
-  fi
+  if [ "$verbose" -eq 1 ]; then printf "$@"; fi
 }
 # ----- Configuration -----  
 SUFFIX="-reef"   # default twin suffix
@@ -244,14 +242,18 @@ if [[ ! -w "$SYMLINK_DIR" ]]; then
  exit 1
 fi
 
-vprintf "Recalling: ${DIM}%s${RESET}\n" "$ABS_TARGET"
-vprintf "From twin: ${DIM}%s${RESET}\n" "$TWIN"
-vprintf "To base:   ${DIM}%s${RESET}\n" "$SYMLINK"
-vprintf "Remove:    ${DIM}%s${RESET}\n\n" "$SYMLINK"
+if [ "$verbose" -eq 1 ]; then
+  printf "Recalling: %s%s%s\n" "$DIM" "$ABS_TARGET" "$RESET"
+  printf "From twin: %s%s%s\n" "$DIM" "$TWIN" "$RESET"
+  printf "To base:   %s%s%s\n" "$DIM" "$SYMLINK" "$RESET"
+  printf "Remove:    %s%s%s\n\n" "$DIM" "$SYMLINK" "$RESET"
+fi
 
 # Remove the symlink first
 if rm -- "$SYMLINK"; then
- vprintf "${GREEN}${OK}${RESET} Removed symlink: %s\n" "$SYMLINK"
+ if [ "$verbose" -eq 1 ]; then
+   printf "%s%s%s Removed symlink: %s\n" "$GREEN" "$OK" "$RESET" "$SYMLINK"
+ fi
 else
  printf "%s%s%s Failed to remove symlink: %s\n" "$RED" "$ERR" "$RESET" "$SYMLINK" >&2
  exit 1
@@ -260,24 +262,36 @@ fi
 # Move the file from twin back to original location
 if mv -- "$ABS_TARGET" "$SYMLINK"; then
   # Verbose summary
-  vprintf "${GREEN}${OK}${RESET} Recalled ← %s
-" "$ABS_TARGET"
-  vprintf "
-${GREEN}${OK}${RESET} Done.
-"
-  # Concise line (default): icon + dashed unlink + red X + name
-  name="$(basename "$SYMLINK")"
-  if [ -d "$SYMLINK" ]; then icon="$FOLDER_ICON"; else icon="$FILE_ICON"; fi
-  printf "%s %s   ●╌╌╌○   %s✗%s %s
-" \
-    "$icon" "$name" "$RED" "$RESET" "$name"
+  if [ "$verbose" -eq 1 ]; then
+    printf "%s%s%s Recalled ← %s\n" "$GREEN" "$OK" "$RESET" "$ABS_TARGET"
+    printf "\n%s%s%s Done.\n" "$GREEN" "$OK" "$RESET"
+  fi
+  # Concise line (default): icon + filename + connection + X + name  
+  if [ "$verbose" -eq 0 ]; then
+    name="$(basename "$SYMLINK")"
+    if [ -d "$SYMLINK" ]; then icon="$FOLDER_ICON"; else icon="$FILE_ICON"; fi
+    
+    # Calculate connection line length based on filename length (similar to reef-status)
+    name_len=${#name}
+    [[ $name_len -lt 10 ]] && name_len=10
+    connection_line=""
+    for ((i=0; i<name_len; i++)); do
+      connection_line+="╌"
+    done
+    
+    printf "%s %-*s ●%s○ %s✗%s %s\n" "$icon" $name_len "$name" "$connection_line" "$RED" "$RESET" "$name"
+  fi
 else
  printf "%s%s%s Move failed: %s %s %s\n" "$RED" "$ERR" "$RESET" "$SYMLINK" "$ARROW_LX" "$ABS_TARGET" >&2
  
  # Attempt rollback: recreate the symlink
- vprintf "${YELLOW}${WARN}${RESET} Attempting rollback...\n"
+ if [ "$verbose" -eq 1 ]; then
+   printf "%s%s%s Attempting rollback...\n" "$YELLOW" "$WARN" "$RESET"
+ fi
  if ln -s -- "$ABS_TARGET" "$SYMLINK" 2>/dev/null; then
-   vprintf "${GREEN}${OK}${RESET} Rollback successful: symlink restored at %s\n" "$SYMLINK"
+   if [ "$verbose" -eq 1 ]; then
+     printf "%s%s%s Rollback successful: symlink restored at %s\n" "$GREEN" "$OK" "$RESET" "$SYMLINK"
+   fi
    exit 1
  else
    printf "%s%s%s Rollback failed! File is still at: %s\n" "$RED" "$ERR" "$RESET" "$ABS_TARGET" >&2
