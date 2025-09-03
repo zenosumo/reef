@@ -68,38 +68,38 @@ All scripts now use secure modern printf style:
 
 **Issue**: reef-kick has a different _realpath implementation than others.
 
-### 1.6 Verbose Mode Support ✅ PARTIALLY COMPLETED
+### 1.6 Verbose Mode Support ✅ COMPLETED
 | Script | Verbose Flag | Helper Function | Status |
 |--------|-------------|-----------------|---------|
 | reef-kick | ✅ -v/--verbose | vprintf() | ✅ Already compliant |
-| reef-status | ❌ No verbose mode | N/A | 🔄 Pending |
+| reef-status | ✅ -v/--verbose | vprintf() | ✅ Updated with verbose mode |
 | reef-recall | ✅ -v/--verbose | vprintf() (fixed) | ✅ Fixed recursive bug |
-| reef-plug | ❌ No verbose mode | N/A | 🔄 Pending |
-| reef-unplug | ❌ No verbose mode | N/A | 🔄 Pending |
+| reef-plug | ✅ -v/--verbose | vprintf() | ✅ Updated with verbose mode |
+| reef-unplug | ✅ -v/--verbose | vprintf() | ✅ Updated with verbose mode |
 
-**Progress**: Fixed reef-recall vprintf bug. Remaining scripts need verbose mode implementation.
+**Result**: All scripts now have consistent verbose mode implementation with proper vprintf helpers.
 
-### 1.7 Help Documentation
+### 1.7 Help Documentation ✅ COMPLETED
 | Script | --help Flag | Help Content |
 |--------|------------|--------------|
 | reef-kick | ✅ Complete | Examples, usage, notes |
-| reef-status | ❌ Missing | None |
+| reef-status | ✅ Complete | Examples, usage, options |
 | reef-recall | ✅ Basic | Simple usage line |
-| reef-plug | ❌ Missing | None |
-| reef-unplug | ❌ Missing | None |
+| reef-plug | ✅ Complete | Examples, usage, options |
+| reef-unplug | ✅ Complete | Examples, usage, options |
 
-**Issue**: Only 2/5 scripts have help documentation.
+**Result**: All scripts now have comprehensive help documentation with consistent format.
 
-### 1.8 Output Formatting Consistency
+### 1.8 Output Formatting Consistency ✅ COMPLETED
 | Script | Success Output | Error Output | Visual Style |
 |--------|---------------|--------------|--------------|
-| reef-kick | Concise: `🔗 file ◀━━━● twin/file` | Consistent format | Unicode heavy |
-| reef-status | Visual diagram with alignment | Consistent format | Unicode heavy |
-| reef-recall | Mixed icons and formatting | Consistent format | Unicode heavy |
-| reef-plug | Simple list with status | Consistent format | Minimal Unicode |
-| reef-unplug | Simple list with status | Consistent format | Minimal Unicode |
+| reef-kick | Concise: `🔗 file ●━━━▶ twin/file` | Consistent format | Fixed-width columns |
+| reef-status | Concise: `🔗 file ●━━━● 📄 file` | Consistent format | Fixed-width columns |
+| reef-recall | Mixed icons and formatting | Consistent format | Fixed-width columns |
+| reef-plug | Concise: `🔗 file ●━━━● base/file` | Consistent format | Fixed-width columns |
+| reef-unplug | Concise: `🔗 file ●━━━● twin/file` | Consistent format | Fixed-width columns |
 
-**Issue**: Different visual styles and output formats across scripts.
+**Result**: All scripts now use consistent visual language with fixed-width columns based on longest filename for proper alignment.
 
 ### 1.9 BASE/TWIN Detection Logic
 - **Consistent**: All scripts use similar logic
@@ -204,15 +204,21 @@ done
 - **Quiet mode** (-q): Errors only
 - **JSON mode** (--json): Machine-readable output (future)
 
-#### 4.2 Consistent Visual Language
+#### 4.2 Consistent Visual Language ✅ COMPLETED
 ```
 # Standard output patterns:
 SUCCESS: ✓ <item>
 ERROR:   ✗ <item> (reason)
 WARNING: ⚠️ <item> (details)
-LINK:    🔗 base ●━━━● twin
+LINK:    🔗 filename ●━━━● 📄 filename
 UNLINK:  📄 base ○╌╌╌○ twin
 STATUS:  [icon] <name> <connection> <target>
+
+# Fixed-width columns:
+- Column width determined by longest filename in current operation
+- Left-aligned filename columns using printf "%-*s" format
+- Connection lines scale to match column width for proper alignment
+- All scripts use consistent ●━━━● connection pattern
 ```
 
 ### Phase 5: Error Handling (Week 3)
@@ -257,10 +263,11 @@ error_already_exists() { ... }
 2. ✅ **TTY detection** - COMPLETED - Critical for non-interactive use
 3. ✅ **ERR vs FAIL naming** - COMPLETED - User-facing inconsistency resolved
 4. ✅ **reef-recall vprintf bug** - COMPLETED - Fixed recursive call bug
-5. **Help documentation** - User experience issue
+5. ✅ **Help documentation** - COMPLETED - User experience consistency achieved
+6. ✅ **Fixed-width column alignment** - COMPLETED - Visual consistency in concise output
 
 ### Medium Priority (Should Fix)
-1. **Verbose mode parity** - Feature consistency
+1. ✅ **Verbose mode parity** - COMPLETED - Feature consistency achieved
 2. **_realpath implementation** - Code maintainability
 3. **Argument parsing cleanup** - Code clarity
 4. **Enhanced error handling** - Trap handlers and exit codes

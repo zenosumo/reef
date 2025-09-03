@@ -25,16 +25,47 @@ if [ "$is_tty" -eq 1 ]; then
   ARROW_LX="←"
   CONNECT="━"
   WARN="⚠️"
+  FILE_ICON="📄"
+  FOLDER_ICON="📁"
+  LINK_ICON="🔗"
 else
   RED=""; GREEN=""; YELLOW=""; DIM=""; BOLD=""; RESET=""
-  OK="[OK]"; ERR="[ERR]"; DOT="*"; ARROW_RX="->"; ARROW_LX="<-"; CONNECT="-"; WARN="[WARN]"
+  OK="[OK]"; ERR="[ERR]"; DOT="*"; ARROW_RX="->"; ARROW_LX="<-"; CONNECT="-"; WARN="[WARN]"; FILE_ICON="[F]"; FOLDER_ICON="[D]"; LINK_ICON="[L]"
 fi
 
-# Support --suffix=foo
+# Parse arguments
+verbose=0
+args=()
+
 for arg in "$@"; do
   case "$arg" in
-    --suffix=*)
-      SUFFIX="${arg#*=}"
+    -v|--verbose) verbose=1 ;;
+    --suffix=*) SUFFIX="${arg#*=}" ;;
+    -h|--help)
+      cat <<EOF
+reef-plug — link files/dirs from the twin folder into the base folder
+
+Usage:
+  reef-plug [-v|--verbose] [--suffix=SUFFIX]
+
+Options:
+  -v, --verbose    Show detailed output for each operation
+  --suffix=SUFFIX  Use custom twin suffix (default: -reef)
+  -h, --help       Show this help
+
+Examples:
+  reef-plug
+  reef-plug --verbose
+  reef-plug --suffix=-experiment
+EOF
+      exit 0
+      ;;
+    -*)
+      printf "%s%s%s Error: unknown option: %s\n" "$RED" "$ERR" "$RESET" "$arg" >&2
+      exit 2
+      ;;
+    *)
+      args+=("$arg")
       ;;
   esac
 done
@@ -106,8 +137,13 @@ if [[ ! -w "$BASE" ]]; then
   exit 1
 fi
 
-printf "Linking from: %s%s%s\n" "$DIM" "$TWIN" "$RESET"
-printf "Into base:    %s%s%s\n\n" "$DIM" "$BASE" "$RESET"
+# vprintf: only print when verbose
+vprintf() {
+  if [ "$verbose" -eq 1 ]; then printf "%b" "$@"; fi
+}
+
+vprintf "Linking from: %s%s%s\n" "$DIM" "$TWIN" "$RESET"
+vprintf "Into base:    %s%s%s\n\n" "$DIM" "$BASE" "$RESET"
 
 # Store original shell options
 original_shopt=$(shopt -p dotglob nullglob 2>/dev/null || true)
@@ -127,7 +163,11 @@ for src in "$TWIN"/*; do
   if [[ -L "$dst" ]]; then
     # Check if it's pointing to our twin (idempotent behavior)
     if [[ "$(readlink "$dst")" == "$src" ]]; then
-      printf "%s%s%s %s %s(already linked correctly)%s\n" "$DIM" "$OK" "$RESET" "$name" "$DIM" "$RESET"
+      vprintf "%s%s%s %s %s(already linked correctly)%s\n" "$DIM" "$OK" "$RESET" "$name" "$DIM" "$RESET"
+      # Concise: show already linked
+      if [ "$verbose" -eq 0 ]; then
+        printf "%s%s %s %s%s%s twin/%s\n" "$LINK_ICON" "$name" "$DOT" "$CONNECT" "$DOT" "$RESET" "$name"
+      fi
     else
       printf "%s%s%s %s %s(linked to different target)%s\n" "$RED" "$ERR" "$RESET" "$name" "$DIM" "$RESET"
     fi
@@ -138,7 +178,12 @@ for src in "$TWIN"/*; do
   fi
 
   if ln -s "$src" "$dst" 2>/dev/null; then
-    printf "%s%s%s %s\n" "$GREEN" "$OK" "$RESET" "$name"
+    # Verbose: detailed output
+    vprintf "%s%s%s %s\n" "$GREEN" "$OK" "$RESET" "$name"
+    # Concise: visual link representation (twin links to base)
+    if [ "$verbose" -eq 0 ]; then
+      printf "%s%s %s%s%s%s base/%s\n" "$LINK_ICON" "$name" "$ARROW_LX" "$CONNECT" "$DOT" "$RESET" "$name"
+    fi
     created=$((created+1))
   else
     printf "%s%s%s %s %s(link failed)%s\n" "$RED" "$ERR" "$RESET" "$name" "$DIM" "$RESET"
@@ -156,4 +201,5 @@ if [[ $had_any -eq 0 ]]; then
   printf "%sNothing to link: %s is empty.%s\n" "$DIM" "$TWIN" "$RESET"
 fi
 
-printf "\nCreated %d link(s).\n" "$created"
+# Summary only in verbose mode
+vprintf "\nCreated %d link(s).\n" "$created"

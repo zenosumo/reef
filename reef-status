@@ -21,6 +21,7 @@ if [ "$is_tty" -eq 1 ]; then
   RED="$(printf '\033[31m')"
   GREEN="$(printf '\033[32m')"
   YELLOW="$(printf '\033[33m')"
+  CYAN="$(printf '\033[36m')"
   DIM="$(printf '\033[2m')"
   BOLD="$(printf '\033[1m')"
   RESET="$(printf '\033[0m')"
@@ -35,7 +36,7 @@ if [ "$is_tty" -eq 1 ]; then
   FOLDER_ICON="📁"
   LINK_ICON="🔗"
 else
-  RED=""; GREEN=""; YELLOW=""; DIM=""; BOLD=""; RESET=""
+  RED=""; GREEN=""; YELLOW=""; CYAN=""; DIM=""; BOLD=""; RESET=""
   OK="[OK]"; ERR="[ERR]"; DOT="*"; ARROW_RX="->"; ARROW_LX="<-"; CONNECT="-"; WARN="[WARN]"; FILE_ICON="[F]"; FOLDER_ICON="[D]"; LINK_ICON="[L]"
 fi
 
@@ -355,27 +356,27 @@ show_concise_output() {
     done
   fi
   
-  # Show linked items with concise format
+  # Show linked items with concise format in cyan
   if [[ ${#linked_dirs[@]} -gt 0 ]]; then
     for name in "${linked_dirs[@]}"; do
-      printf "%s %-*s %s%s%s %s %s\n" "$LINK_ICON" $max_len "$name" "$DOT" "$connection_line" "$DOT" "$FOLDER_ICON" "$name"
+      printf "%s%s %-*s %s%s%s %s %s%s\n" "$CYAN" "$LINK_ICON" $max_len "$name" "$DOT" "$connection_line" "$DOT" "$FOLDER_ICON" "$name" "$RESET"
     done
   fi
   if [[ ${#linked_files[@]} -gt 0 ]]; then
     for name in "${linked_files[@]}"; do
-      printf "%s %-*s %s%s%s %s %s\n" "$LINK_ICON" $max_len "$name" "$DOT" "$connection_line" "$DOT" "$FILE_ICON" "$name"
+      printf "%s%s %-*s %s%s%s %s %s%s\n" "$CYAN" "$LINK_ICON" $max_len "$name" "$DOT" "$connection_line" "$DOT" "$FILE_ICON" "$name" "$RESET"
     done
   fi
   
-  # Show unlinked items (ready to plug)
+  # Show unlinked items (ready to plug) in yellow with dot format
   if [[ ${#unlinked_dirs[@]} -gt 0 ]]; then
     for name in "${unlinked_dirs[@]}"; do
-      printf "%s%s%s %s %s(unlinked in twin)%s\n" "$YELLOW" "$FOLDER_ICON" "$RESET" "$name" "$DIM" "$RESET"
+      printf "%s                   %s %s %s%s\n" "$YELLOW" "$DOT" "$FOLDER_ICON" "$name" "$RESET"
     done
   fi
   if [[ ${#unlinked_files[@]} -gt 0 ]]; then
     for name in "${unlinked_files[@]}"; do
-      printf "%s%s%s %s %s(unlinked in twin)%s\n" "$YELLOW" "$FILE_ICON" "$RESET" "$name" "$DIM" "$RESET"
+      printf "%s                   %s %s %s%s\n" "$YELLOW" "$DOT" "$FILE_ICON" "$name" "$RESET"
     done
   fi
 }

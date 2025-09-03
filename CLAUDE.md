@@ -84,10 +84,27 @@ All scripts follow consistent patterns that must be maintained:
 - Use clear error messages with context
 - Exit codes: 0 (success), 1 (operation error), 2 (usage error)
 
-### Output Modes
-- **Verbose** (`-v`/`--verbose`): Multi-line detailed output
-- **Concise** (default): Single-line status-like output
-- reef-kick concise format: `🔗 <file> ◀━━━● <twin>/<file>`
+### Output Modes - Consistent Visual Language
+All scripts now follow standardized output modes:
+
+#### Concise Mode (Default)
+- **Format**: Visual symbols showing relationships
+- **Purpose**: Clean, status-line style output for regular use
+- **Examples**:
+  - reef-kick: `🔗 file ●━━━▶ twin/file` (file moved to twin)
+  - reef-plug: `🔗 file ←━━● base/file` (twin linked to base)  
+  - reef-unplug: `🔗 file ●━━● twin/file` (link removed)
+  - reef-status: `🔗 file ←━● twin/file` (shows current links)
+  - reef-recall: Uses custom unlink visual
+
+#### Verbose Mode (`-v`/`--verbose`)
+- **Format**: Detailed list with status indicators and explanations
+- **Purpose**: Debugging, detailed progress tracking
+- **Examples**:
+  - `✓ filename (operation details)`
+  - `✗ filename (error reason)`
+  - `⚠️ filename (warning details)`
+  - Multi-line summaries and progress indicators
 
 ## Important Implementation Details
 
@@ -124,16 +141,19 @@ fi
 ```
 
 ### Modifying Output Format
-- Maintain consistency across all scripts
-- Update both verbose and concise output modes
-- Keep visual alignment in reef-status output
+- **Maintain consistency**: All scripts use the same visual language
+- **Two-mode requirement**: Every script must support both concise (default) and verbose (-v) modes
+- **Concise format**: Use visual symbols (🔗, ●, ━, ▶, ←) to show relationships
+- **Verbose format**: Use status indicators (✓, ✗, ⚠️) with detailed explanations
+- **Non-TTY fallback**: Ensure plain text alternatives work in all modes
 
 ### Adding New Scripts
 New scripts should:
 1. **Start with `set -euo pipefail`** for atomic operations
-2. Include portable `_realpath` function
-3. Implement TTY detection for colors/symbols
-4. Use consistent BASE/TWIN detection logic
-5. Support `--suffix=` parameter
-6. Provide `--help` output
-7. Follow existing error handling patterns with explicit failure handling where needed
+2. **Support both output modes**: Concise (default) and verbose (-v/--verbose)
+3. Include portable `_realpath` function
+4. Implement TTY detection for colors/symbols
+5. Use consistent BASE/TWIN detection logic
+6. Support `--suffix=` parameter
+7. Provide `--help` output with examples
+8. Follow existing error handling patterns with explicit failure handling where needed
