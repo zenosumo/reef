@@ -19,6 +19,7 @@ if [ -t 1 ]; then is_tty=1; fi
 
 if [ "$is_tty" -eq 1 ]; then
   RED="$(printf '\033[31m')"
+  LIGHTRED="$(printf '\033[91m')"
   GREEN="$(printf '\033[32m')"
   YELLOW="$(printf '\033[33m')"
   CYAN="$(printf '\033[36m')"
@@ -35,9 +36,10 @@ if [ "$is_tty" -eq 1 ]; then
   FILE_ICON="📄"
   FOLDER_ICON="📁"
   LINK_ICON="🔗"
+  SKULL_ICON="💀"
 else
-  RED=""; GREEN=""; YELLOW=""; CYAN=""; DIM=""; BOLD=""; RESET=""
-  OK="[OK]"; ERR="[ERR]"; DOT="*"; ARROW_RX="->"; ARROW_LX="<-"; CONNECT="-"; WARN="[WARN]"; FILE_ICON="[F]"; FOLDER_ICON="[D]"; LINK_ICON="[L]"
+  RED=""; LIGHTRED=""; GREEN=""; YELLOW=""; CYAN=""; DIM=""; BOLD=""; RESET=""
+  OK="[OK]"; ERR="[ERR]"; DOT="*"; ARROW_RX="->"; ARROW_LX="<-"; CONNECT="-"; WARN="[WARN]"; FILE_ICON="[F]"; FOLDER_ICON="[D]"; LINK_ICON="[L]"; SKULL_ICON="[BROKEN]"
 fi
 
 # Parse arguments
@@ -344,15 +346,15 @@ show_verbose_output() {
 
 # Concise output function
 show_concise_output() {
-  # Show broken links with simple format
+  # Show broken links with skull icon in light red
   if [[ ${#broken_dirs[@]} -gt 0 ]]; then
     for name in "${broken_dirs[@]}"; do
-      printf "%s%s%s %s %s(broken)%s\n" "$RED" "$ERR" "$RESET" "$name" "$DIM" "$RESET"
+      printf "%s%s %s%s\n" "$LIGHTRED" "$SKULL_ICON" "$name" "$RESET"
     done
   fi
   if [[ ${#broken_files[@]} -gt 0 ]]; then
     for name in "${broken_files[@]}"; do
-      printf "%s%s%s %s %s(broken)%s\n" "$RED" "$ERR" "$RESET" "$name" "$DIM" "$RESET"
+      printf "%s%s %s%s\n" "$LIGHTRED" "$SKULL_ICON" "$name" "$RESET"
     done
   fi
   

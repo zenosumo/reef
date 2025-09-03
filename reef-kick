@@ -34,9 +34,13 @@ if [ "$is_tty" -eq 1 ]; then
   ARROW_RX="→"
   ARROW_LX="←"
   CONNECT="━"
+  FILE_ICON="📄"
+  FOLDER_ICON="📁"
+  LINK_ICON="🔗"
 else
   RED=""; GREEN=""; YELLOW=""; DIM=""; BOLD=""; RESET=""
   OK="[OK]"; ERR="[ERR]"; DOT="*"; ARROW_RX="->"; ARROW_LX="<-"; CONNECT="-"
+  FILE_ICON="[F]"; FOLDER_ICON="[D]"; LINK_ICON="[L]"
 fi
 
 
@@ -106,9 +110,6 @@ SRC="$BASE/$REL_PATH"
 DEST="$TWIN/$REL_PATH"
 
 # ----- Helpers -----
-vprintf() {
-  if [ "$verbose" -eq 1 ]; then printf "%b" "$1"; fi
-}
 
 ask_yes_default_yes() {
   # prints prompt to stderr, reads from tty if available
@@ -150,7 +151,9 @@ fi
 if [ ! -d "$TWIN" ]; then
   if ask_yes_default_yes "Twin folder does not exist. Create it at: $TWIN?"; then
     mkdir -p "$TWIN"
-    vprintf "Created twin: %s\n" "$TWIN"
+    if [ "$verbose" -eq 1 ]; then
+      printf "Created twin: %s\n" "$TWIN"
+    fi
   else
     printf "%s%s Aborted:%s twin folder missing: %s\n" "$RED" "$ERR" "$RESET" "$TWIN" >&2
     exit 1
@@ -164,9 +167,11 @@ if [ -e "$DEST" ]; then
 fi
 
 # ----- Action -----
-vprintf "Moving: %s\n" "$SRC"
-vprintf "To:     %s\n" "$DEST"
-vprintf "Link:   %s\n" "$SRC"
+if [ "$verbose" -eq 1 ]; then
+  printf "Moving:    %s%s%s\n" "$DIM" "$SRC" "$RESET"
+  printf "To twin:   %s%s%s\n" "$DIM" "$DEST" "$RESET"
+  printf "Link back: %s%s%s\n\n" "$DIM" "$SRC" "$RESET"
+fi
 
 # Ensure parent dir in twin
 mkdir -p "$(dirname "$DEST")"
@@ -193,21 +198,30 @@ set -e
 
 # ----- Output -----
 if [ "$verbose" -eq 1 ]; then
-  printf "%s %s Moved %s→%s %s
-" "$GREEN$OK$RESET" "$DIM" "$RESET$SRC " "$DEST" "$DIM$RESET"
-  printf "%s %s Linked %s→%s %s
-" "$GREEN$OK$RESET" "$DIM" "$RESET$SRC " "$DEST" "$DIM$RESET"
-  printf "
-%s Done.%s
-" "$GREEN" "$RESET"
+  printf "%s%s%s Moved %s → %s\n" "$GREEN" "$OK" "$RESET" "$SRC" "$DEST"
+  printf "%s%s%s Linked %s → %s\n" "$GREEN" "$OK" "$RESET" "$SRC" "$DEST"
+  printf "\n%s%s%s Done.\n" "$GREEN" "$OK" "$RESET"
 else
-  # Concise, reef-status-like with right-pointing arrow (●━━━▶)
+  # Concise, reef-status-like with fixed-width connection
   rel_src="$REL_PATH"
   rel_dest="$REL_PATH"
   base_name_only="$(basename "$BASE")"
   twin_name_only="$(basename "$TWIN")"
-  printf "🔗 %s ●━━━▶ %s/%s
-" \
-    "$rel_src" \
-    "$twin_name_only" "$rel_dest"
+  
+  # Determine if it's a file or folder
+  if [ -d "$DEST" ]; then
+    icon="$FOLDER_ICON"
+  else
+    icon="$FILE_ICON"
+  fi
+  
+  # Calculate connection line length based on filename length (like reef-status)
+  name_len=${#rel_src}
+  [[ $name_len -lt 10 ]] && name_len=10
+  connection_line=""
+  for ((i=0; i<name_len; i++)); do
+    connection_line+="━"
+  done
+  
+  printf "🔗 %-*s ●%s▶ %s %s/%s\n" $name_len "$rel_src" "$connection_line" "$icon" "$twin_name_only" "$rel_dest"
 fi
