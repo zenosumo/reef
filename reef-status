@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
-# dk-status — display the relationship between base and twin folder files.
+# reef-status — display the relationship between base and twin folder files.
 # Usage:
-#   dk-status [--suffix=-dk]
+#   reef-status [--suffix=-reef]
 # Behavior:
 #   - Show broken symlinks first (most urgent)
 #   - Show linked files (base → twin connections)  
@@ -11,7 +11,7 @@
 set -u
 
 # Config
-SUFFIX="-dk"   # default twin suffix
+SUFFIX="-reef"   # default twin suffix
 
 # Colors/icons
 GREEN="$(printf '\033[32m')"
