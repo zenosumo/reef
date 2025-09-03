@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
-# dk-plug — link files/dirs from the twin folder into the base folder.
-# Usage: run from either the base project dir or its twin (default suffix "-dk").
+# reef-plug — link files/dirs from the twin folder into the base folder.
+# Usage: run from either the base project dir or its twin (default suffix "-reef").
 
 set -u
 
 # Config
-SUFFIX="-dk"   # default twin suffix
+SUFFIX="-reef"   # default twin suffix
 
 # Colors/icons
 GREEN="$(printf '\033[32m')"   # green
