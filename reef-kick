@@ -44,23 +44,32 @@ else
 fi
 
 
-# Portable realpath (works on macOS/BSD and Linux). Resolves to absolute path.
+# Practical realpath that works for our use case
 _realpath() {
-  # If absolute, return as-is
-  case "$1" in
-    /*) printf "%s\n" "$1"; return 0;;
-  esac
-  # Build absolute from dirname + basename; resolves existing dirs with -P
-  local dir base
-  dir="$(cd "$(dirname "$1")" 2>/dev/null && pwd -P)" || dir="$(dirname "$1")"
-  base="$(basename "$1")"
-  printf "%s/%s\n" "$dir" "$base"
+  local path="$1"
+  
+  # Use system realpath with fallback to manual resolution
+  if command -v realpath >/dev/null 2>&1; then
+    realpath -m "$path" 2>/dev/null || echo "$path"
+  else
+    # Make absolute if relative
+    if [[ "$path" != /* ]]; then
+      path="$PWD/$path"
+    fi
+    
+    # Basic cleanup
+    path="${path//\/\///}"  # compress multiple slashes
+    path="${path%/}"        # remove trailing slash
+    [[ -n "$path" ]] || path="/"
+    
+    echo "$path"
+  fi
 }
 verbose=0
 args=()
 
-for a in "$@"; do
-  case "$a" in
+for arg in "$@"; do
+  case "$arg" in
     -v|--verbose) verbose=1 ;;
     -h|--help)
       cat <<EOF
@@ -80,11 +89,11 @@ EOF
       exit 0
       ;;
     -*)
-      printf "%s%s Error:%s unknown option: %s\n" "$RED" "$ERR" "$RESET" "$a" >&2
+      printf "%s%s Error:%s unknown option: %s\n" "$RED" "$ERR" "$RESET" "$arg" >&2
       exit 2
       ;;
     *)
-      args+=("$a")
+      args+=("$arg")
       ;;
   esac
 done
@@ -94,15 +103,31 @@ if [ "${#args[@]}" -ne 1 ]; then
   exit 2
 fi
 
-# ----- Resolve BASE/TWIN from CWD -----
-CWD="$(pwd)"
-base_name="$(basename "$CWD")"
-if [[ "$base_name" == *"$SUFFIX" ]]; then
-  TWIN="$CWD"
-  BASE="${CWD%$SUFFIX}"
-else
+# Determine BASE and TWIN from current dir with improved logic
+CWD="$(_realpath "$PWD")"
+BASE=""
+TWIN=""
+
+# Check if current directory ends with suffix AND a non-suffix version exists
+if [[ "$CWD" == *"$SUFFIX" ]]; then
+  potential_base="${CWD%$SUFFIX}"
+  # Only treat as twin if the base actually exists
+  if [[ -d "$potential_base" ]]; then
+    TWIN="$CWD"
+    BASE="$(_realpath "$potential_base")"
+  fi
+fi
+
+# If we haven't identified BASE/TWIN yet, assume we're in base
+if [[ -z "$BASE" ]]; then
   BASE="$CWD"
-  TWIN="${BASE}${SUFFIX}"
+  TWIN="${CWD}${SUFFIX}"
+fi
+
+# Sanity check: BASE and TWIN shouldn't be the same
+if [[ "$BASE" == "$TWIN" ]]; then
+  printf "%s%s Error:%s Base and twin directories are identical. Check your suffix configuration.\n" "$RED" "$ERR" "$RESET" >&2
+  exit 1
 fi
 
 REL_PATH="${args[0]}"

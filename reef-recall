@@ -9,38 +9,45 @@
 
 set -euo pipefail
 
-# Config
+# ----- Configuration -----  
+SUFFIX="-reef"   # default twin suffix
 
-# Verbosity
+# Parse arguments
 verbose=0
+args=()
 
-# Parse flags (only -v/--verbose for now); leave positional SYMLINK arg intact
-parsed_args=()
 for arg in "$@"; do
   case "$arg" in
     -v|--verbose) verbose=1 ;;
-    --) shift; break ;;
+    --suffix=*) SUFFIX="${arg#*=}" ;;
     -h|--help)
-      echo "Usage: reef-recall [-v|--verbose] <symlink>"
+      cat <<EOF
+reef-recall — move a file from the twin folder back to base and remove its symlink
+
+Usage:
+  reef-recall [-v|--verbose] [--suffix=SUFFIX] <symlink>
+
+Options:
+  -v, --verbose    Show detailed output for each operation
+  --suffix=SUFFIX  Use custom twin suffix (default: -reef)
+  -h, --help       Show this help
+
+Examples:
+  reef-recall myfile
+  reef-recall --verbose config/settings.json
+  reef-recall --suffix=-experiment myfile
+EOF
       exit 0
       ;;
-    -*)
-      # Unknown flags will be handled later by existing logic or ignored
+    -*) 
+      printf "%s%s%s Error: unknown option: %s\n" "$RED" "$ERR" "$RESET" "$arg" >&2
+      exit 2
       ;;
     *)
-      parsed_args+=("$arg")
+      args+=("$arg")
       ;;
   esac
 done
-# Rebuild $@ with parsed_args (so the rest of the script works unchanged)
-set -- "${parsed_args[@]}"
-
-# vprintf: only print when verbose
-vprintf() {
-  if [ "$verbose" -eq 1 ]; then printf "$@"; fi
-}
-# ----- Configuration -----  
-SUFFIX="-reef"   # default twin suffix
 
 # ----- Colors & symbols (fallback to plain if not a TTY) -----
 is_tty=0
@@ -68,49 +75,34 @@ else
   OK="[OK]"; ERR="[ERR]"; DOT="*"; ARROW_RX="->"; ARROW_LX="<-"; CONNECT="-"; WARN="[WARN]"; FILE_ICON="[F]"; FOLDER_ICON="[D]"; LINK_ICON="[L]"
 fi
 
-# Parse flags
-for arg in "$@"; do
- case "$arg" in
-   --suffix=*) SUFFIX="${arg#*=}";;
- esac
-done
-
-# Strip flags from $@ to get the first non-flag as the symlink arg
-SYMLINK_ARG=""
-for arg in "$@"; do
- case "$arg" in
-   --suffix=*) ;;  # skip
-   --*) ;;         # ignore unknown flags for now
-   *) SYMLINK_ARG="$arg"; break;;
- esac
-done
-
-# Warn if no symlink provided
-if [[ -z "${SYMLINK_ARG:-}" ]]; then
- vprintf "${YELLOW}${WARN}${RESET} A symlink was expected. Usage: reef-recall <symlink> [--suffix=-reef]\n"
- exit 0
+# Check for required symlink argument
+if [ "${#args[@]}" -ne 1 ]; then
+  printf "%s%s%s Usage: reef-recall [-v|--verbose] [--suffix=SUFFIX] <symlink>\n" "$YELLOW" "$DOT" "$RESET" >&2
+  exit 2
 fi
+
+SYMLINK_ARG="${args[0]}"
 
 # Practical realpath that works for our use case
 _realpath() {
- local path="$1"
- 
- # Use system realpath with fallback to manual resolution
- if command -v realpath >/dev/null 2>&1; then
-   realpath -m "$path" 2>/dev/null || echo "$path"
- else
-   # Make absolute if relative
-   if [[ "$path" != /* ]]; then
-     path="$PWD/$path"
-   fi
-   
-   # Basic cleanup
-   path="${path//\/\///}"  # compress multiple slashes
-   path="${path%/}"        # remove trailing slash
-   [[ -n "$path" ]] || path="/"
-   
-   echo "$path"
- fi
+  local path="$1"
+  
+  # Use system realpath with fallback to manual resolution
+  if command -v realpath >/dev/null 2>&1; then
+    realpath -m "$path" 2>/dev/null || echo "$path"
+  else
+    # Make absolute if relative
+    if [[ "$path" != /* ]]; then
+      path="$PWD/$path"
+    fi
+    
+    # Basic cleanup
+    path="${path//\/\///}"  # compress multiple slashes
+    path="${path%/}"        # remove trailing slash
+    [[ -n "$path" ]] || path="/"
+    
+    echo "$path"
+  fi
 }
 
 # Determine BASE and TWIN from current dir with improved logic
