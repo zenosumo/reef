@@ -137,19 +137,42 @@ if [[ ! -w "$BASE" ]]; then
   exit 1
 fi
 
-# vprintf: only print when verbose
-vprintf() {
-  if [ "$verbose" -eq 1 ]; then printf "%b" "$@"; fi
-}
-
-vprintf "Linking from: %s%s%s\n" "$DIM" "$TWIN" "$RESET"
-vprintf "Into base:    %s%s%s\n\n" "$DIM" "$BASE" "$RESET"
+if [ "$verbose" -eq 1 ]; then
+  printf "Linking from: %s%s%s\n" "$DIM" "$TWIN" "$RESET"
+  printf "Into base:    %s%s%s\n\n" "$DIM" "$BASE" "$RESET"
+fi
 
 # Store original shell options
 original_shopt=$(shopt -p dotglob nullglob 2>/dev/null || true)
 
-# Link each top-level item from TWIN into BASE
+# Collect all filenames first to calculate max length
 shopt -s dotglob nullglob
+all_names=()
+for src in "$TWIN"/*; do
+  name="$(basename -- "$src")"
+  [[ "$name" == "." || "$name" == ".." ]] && continue
+  all_names+=("$name")
+done
+
+# Calculate maximum filename length for alignment
+max_len=0
+if [[ ${#all_names[@]} -gt 0 ]]; then
+  for name in "${all_names[@]}"; do
+    len=${#name}
+    [[ $len -gt $max_len ]] && max_len=$len
+  done
+fi
+
+# Ensure minimum width for alignment
+[[ $max_len -lt 10 ]] && max_len=10
+
+# Calculate connection line length - fixed width based on longest filename
+connection_line=""
+for ((i=0; i<max_len; i++)); do
+  connection_line+="━"
+done
+
+# Link each top-level item from TWIN into BASE
 created=0
 had_any=0
 
@@ -160,13 +183,22 @@ for src in "$TWIN"/*; do
 
   [[ "$name" == "." || "$name" == ".." ]] && continue
 
+  # Determine if it's a file or folder
+  if [[ -d "$src" ]]; then
+    icon="$FOLDER_ICON"
+  else
+    icon="$FILE_ICON"
+  fi
+
   if [[ -L "$dst" ]]; then
     # Check if it's pointing to our twin (idempotent behavior)
     if [[ "$(readlink "$dst")" == "$src" ]]; then
-      vprintf "%s%s%s %s %s(already linked correctly)%s\n" "$DIM" "$OK" "$RESET" "$name" "$DIM" "$RESET"
-      # Concise: show already linked
+      if [ "$verbose" -eq 1 ]; then
+        printf "%s%s%s %s %s(already linked correctly)%s\n" "$DIM" "$OK" "$RESET" "$name" "$DIM" "$RESET"
+      fi
+      # Concise: show already linked with fixed width
       if [ "$verbose" -eq 0 ]; then
-        printf "%s%s %s %s%s%s twin/%s\n" "$LINK_ICON" "$name" "$DOT" "$CONNECT" "$DOT" "$RESET" "$name"
+        printf "%s %-*s %s%s%s %s %s\n" "$LINK_ICON" $max_len "$name" "$DOT" "$connection_line" "$DOT" "$icon" "$name"
       fi
     else
       printf "%s%s%s %s %s(linked to different target)%s\n" "$RED" "$ERR" "$RESET" "$name" "$DIM" "$RESET"
@@ -179,10 +211,12 @@ for src in "$TWIN"/*; do
 
   if ln -s "$src" "$dst" 2>/dev/null; then
     # Verbose: detailed output
-    vprintf "%s%s%s %s\n" "$GREEN" "$OK" "$RESET" "$name"
-    # Concise: visual link representation (twin links to base)
+    if [ "$verbose" -eq 1 ]; then
+      printf "%s%s%s %s\n" "$GREEN" "$OK" "$RESET" "$name"
+    fi
+    # Concise: visual link representation with fixed width
     if [ "$verbose" -eq 0 ]; then
-      printf "%s%s %s%s%s%s base/%s\n" "$LINK_ICON" "$name" "$ARROW_LX" "$CONNECT" "$DOT" "$RESET" "$name"
+      printf "%s%s%s %-*s ◀%s● %s %s\n" "$GREEN" "$LINK_ICON" "$RESET" $max_len "$name" "$connection_line" "$icon" "$name"
     fi
     created=$((created+1))
   else
@@ -202,4 +236,6 @@ if [[ $had_any -eq 0 ]]; then
 fi
 
 # Summary only in verbose mode
-vprintf "\nCreated %d link(s).\n" "$created"
+if [ "$verbose" -eq 1 ]; then
+  printf "\nCreated %d link(s).\n" "$created"
+fi

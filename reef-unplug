@@ -136,18 +136,60 @@ if [[ ! -d "$TWIN" ]]; then
   printf "%sWill still check for orphaned links pointing to: %s%s\n\n" "$DIM" "$TWIN" "$RESET"
 fi
 
-# vprintf: only print when verbose
-vprintf() {
-  if [ "$verbose" -eq 1 ]; then printf "%b" "$@"; fi
-}
-
-vprintf "Removing links from: %s%s%s\n" "$DIM" "$BASE" "$RESET"
-vprintf "That point to:       %s%s%s\n\n" "$DIM" "$TWIN" "$RESET"
+if [ "$verbose" -eq 1 ]; then
+  printf "Removing links from: %s%s%s\n" "$DIM" "$BASE" "$RESET"
+  printf "That point to:       %s%s%s\n\n" "$DIM" "$TWIN" "$RESET"
+fi
 
 # Store original shell options
 original_shopt=$(shopt -p dotglob nullglob 2>/dev/null || true)
 
 shopt -s dotglob nullglob
+
+# Collect all symlinks first to calculate max length
+all_names=()
+for dst in "$BASE"/*; do
+  name="$(basename -- "$dst")"
+  [[ "$name" == "." || "$name" == ".." ]] && continue
+  [[ -L "$dst" ]] || continue
+  
+  # Get the raw symlink target
+  raw_target="$(readlink "$dst" 2>/dev/null || true)"
+  if [[ -n "$raw_target" ]]; then
+    # Resolve to absolute path
+    if [[ "$raw_target" == /* ]]; then
+      resolved_target="$raw_target"
+    else
+      resolved_target="$(_realpath "$(dirname -- "$dst")/$raw_target")"
+    fi
+    
+    # Check if target is within twin directory
+    case "$resolved_target" in
+      "$TWIN"|"$TWIN"/*)
+        all_names+=("$name")
+        ;;
+    esac
+  fi
+done
+
+# Calculate maximum filename length for alignment
+max_len=0
+if [[ ${#all_names[@]} -gt 0 ]]; then
+  for name in "${all_names[@]}"; do
+    len=${#name}
+    [[ $len -gt $max_len ]] && max_len=$len
+  done
+fi
+
+# Ensure minimum width for alignment
+[[ $max_len -lt 10 ]] && max_len=10
+
+# Calculate connection line length - fixed width based on longest filename
+connection_line=""
+for ((i=0; i<max_len; i++)); do
+  connection_line+="╌"
+done
+
 removed=0
 checked_any=0
 
@@ -174,19 +216,30 @@ for dst in "$BASE"/*; do
     resolved_target="$(_realpath "$(dirname -- "$dst")/$raw_target")"
   fi
 
+  # Determine if target is a file or folder
+  if [[ -d "$resolved_target" ]]; then
+    icon="$FOLDER_ICON"
+  else
+    icon="$FILE_ICON"
+  fi
+
   # Check if target is within twin directory
   case "$resolved_target" in
     "$TWIN"|"$TWIN"/*)
       if [[ ! -e "$resolved_target" ]]; then
-        vprintf "%s%s%s %s %s(broken link to twin - removing)%s\n" "$YELLOW" "$WARN" "$RESET" "$name" "$DIM" "$RESET"
+        if [ "$verbose" -eq 1 ]; then
+          printf "%s%s%s %s %s(broken link to twin - removing)%s\n" "$YELLOW" "$WARN" "$RESET" "$name" "$DIM" "$RESET"
+        fi
       fi
       
       if rm -f -- "$dst"; then
         # Verbose: detailed output
-        vprintf "%s%s%s %s\n" "$GREEN" "$OK" "$RESET" "$name"
-        # Concise: show unlinked with visual
+        if [ "$verbose" -eq 1 ]; then
+          printf "%s%s%s %s\n" "$GREEN" "$OK" "$RESET" "$name"
+        fi
+        # Concise: show unlinked with fixed width visual
         if [ "$verbose" -eq 0 ]; then
-          printf "%s%s %s%s%s%s twin/%s\n" "$LINK_ICON" "$name" "$DOT" "$CONNECT" "$DOT" "$RESET" "$name"
+          printf "%s%s%s %-*s ○%s● %s %s\n" "$RED" "$ERR" "$RESET" $max_len "$name" "$connection_line" "$icon" "$name"
         fi
         removed=$((removed+1))
       else
@@ -211,4 +264,6 @@ if [[ $checked_any -eq 0 ]]; then
 fi
 
 # Summary only in verbose mode
-vprintf "\nRemoved %d link(s).\n" "$removed"
+if [ "$verbose" -eq 1 ]; then
+  printf "\nRemoved %d link(s).\n" "$removed"
+fi
