@@ -31,11 +31,12 @@ if [ "$is_tty" -eq 1 ]; then
   OK="✓"
   ERR="✗"
   DOT="●"
-  ARROW="→"
+  ARROW_RX="→"
+  ARROW_LX="←"
   CONNECT="━"
 else
   RED=""; GREEN=""; YELLOW=""; DIM=""; BOLD=""; RESET=""
-  OK="[OK]"; ERR="[ERR]"; DOT="*"; ARROW="->"; CONNECT="-"
+  OK="[OK]"; ERR="[ERR]"; DOT="*"; ARROW_RX="->"; ARROW_LX="<-"; CONNECT="-"
 fi
 
 
@@ -140,7 +141,7 @@ if [ -L "$SRC" ]; then
   # Compute absolute intended destination
   abs_dest="$(cd "$TWIN" 2>/dev/null && _realpath "$DEST" 2>/dev/null || echo "$DEST")"
   if [ "$link_target" = "$abs_dest" ]; then
-    printf "%s%s Already linked:%s %s %s %s\n" "$YELLOW" "$DOT" "$RESET" "$SRC" "$ARROW" "$DEST" >&2
+    printf "%s%s Already linked:%s %s %s %s\n" "$YELLOW" "$DOT" "$RESET" "$SRC" "$ARROW_RX" "$DEST" >&2
     exit 1
   fi
 fi
