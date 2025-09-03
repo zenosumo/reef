@@ -201,12 +201,12 @@ if [ "$verbose" -eq 1 ]; then
 %s Done.%s
 " "$GREEN" "$RESET"
 else
-  # Concise, reef-status-like with swapped arrow and dot (◀━━━●)
+  # Concise, reef-status-like with right-pointing arrow (●━━━▶)
   rel_src="$REL_PATH"
   rel_dest="$REL_PATH"
   base_name_only="$(basename "$BASE")"
   twin_name_only="$(basename "$TWIN")"
-  printf "🔗 %s ◀━━━● %s/%s
+  printf "🔗 %s ●━━━▶ %s/%s
 " \
     "$rel_src" \
     "$twin_name_only" "$rel_dest"
