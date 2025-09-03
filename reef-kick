@@ -3,7 +3,7 @@
 # Usage:
 #   dk-kick [-v|--verbose] <path-inside-project>
 # Behavior:
-#   - Run from either BASE or its "-dk" twin.
+#   - Run from either BASE or its SUFFIX twin.
 #   - If TWIN doesn't exist, interactively offer to create it (default: Yes on Enter).
 #   - Refuse if the target already exists in TWIN.
 #   - Move the source, then create a symlink at the original location pointing to TWIN.
@@ -13,6 +13,9 @@
 #   - Always prints clear error lines on failure and returns non-zero.
 
 set -euo pipefail
+
+# ----- Configuration -----
+SUFFIX="-reef"
 
 # ----- Colors & symbols (fallback to plain if not a TTY) -----
 is_tty=0
@@ -56,7 +59,7 @@ for a in "$@"; do
     -v|--verbose) verbose=1 ;;
     -h|--help)
       cat <<EOF
-dk-kick — move a file/dir into the -dk twin and link it back
+dk-kick — move a file/dir into the $SUFFIX twin and link it back
 
 Usage:
   dk-kick [-v|--verbose] <path-inside-project>
@@ -66,7 +69,7 @@ Examples:
   dk-kick --verbose config
 
 Notes:
-  - Run inside your project BASE or its "-dk" twin directory.
+  - Run inside your project BASE or its "$SUFFIX" twin directory.
   - If the twin directory doesn't exist, you'll be asked to create it.
 EOF
       exit 0
@@ -89,12 +92,12 @@ fi
 # ----- Resolve BASE/TWIN from CWD -----
 CWD="$(pwd)"
 base_name="$(basename "$CWD")"
-if [[ "$base_name" == *"-dk" ]]; then
+if [[ "$base_name" == *"$SUFFIX" ]]; then
   TWIN="$CWD"
-  BASE="${CWD%-dk}"
+  BASE="${CWD%$SUFFIX}"
 else
   BASE="$CWD"
-  TWIN="${BASE}-dk"
+  TWIN="${BASE}${SUFFIX}"
 fi
 
 REL_PATH="${args[0]}"
