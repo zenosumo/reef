@@ -199,7 +199,24 @@ detect_base_twin() {
   # If we haven't identified BASE/TWIN yet, assume we're in base
   if [[ -z "$BASE" ]]; then
     BASE="$cwd"
-    TWIN="${cwd}${suffix}"
+    
+    # First: Check for twin at same level
+    local same_level_twin="${cwd}${suffix}"
+    if [[ -d "$same_level_twin" ]]; then
+      TWIN="$same_level_twin"
+    else
+      # Second: Check for twin in ~/.reef/
+      local project_name="$(basename "$cwd")"
+      local reef_home="${HOME}/.reef"
+      local alt_twin="${reef_home}/${project_name}${suffix}"
+      
+      if [[ -d "$alt_twin" ]]; then
+        TWIN="$(_realpath "$alt_twin")"
+      else
+        # Default to same-level path (for creation)
+        TWIN="$same_level_twin"
+      fi
+    fi
   fi
   
   # Sanity check: BASE and TWIN shouldn't be the same
@@ -406,8 +423,12 @@ cmd_kick() {
   
   # Ensure twin exists (or create)
   if [[ ! -d "$TWIN" ]]; then
-    if ask_yes_default_yes "Twin folder does not exist. Create it at: $TWIN?"; then
-      mkdir -p "$TWIN"
+    # Always create at same level when prompting
+    local create_path="${BASE}${SUFFIX}"
+    if ask_yes_default_yes "Twin folder does not exist. Create it at: $create_path?"; then
+      mkdir -p "$create_path"
+      # Update TWIN to the newly created path
+      TWIN="$create_path"
       if [[ $verbose -eq 1 ]]; then
         printf "Created twin: %s\n" "$TWIN"
       fi
