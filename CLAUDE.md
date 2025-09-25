@@ -4,56 +4,83 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-Reef is a workspace management system that creates and manages "twin" workspaces for project development. It maintains a parallel directory structure (the "twin") alongside the main project directory (the "base"), with seamless file linking and movement between them.
+Reef is a unified workspace management system that creates and manages "twin" workspaces for project development. It maintains a parallel directory structure (the "twin") alongside the main project directory (the "base"), with seamless file linking and movement between them.
 
 Key concepts:
 - **BASE**: Main project directory (e.g., `myproject/`)
 - **TWIN**: Parallel directory with suffix (default: `myproject-reef/`)
 - Files can be moved between BASE and TWIN with automatic symlinking
 
-## Core Scripts
+## Current Architecture
 
-1. **reef-kick**: Move file/dir from BASE to TWIN, replace with symlink
-2. **reef-status**: Display relationships between BASE and TWIN files
-3. **reef-recall**: Move file back from TWIN to BASE, remove symlink
-4. **reef-plug**: Create symlinks in BASE for all TWIN contents
-5. **reef-unplug**: Remove all symlinks in BASE pointing to TWIN
+The project has been **consolidated** from separate scripts into a unified `reef` command:
+
+### Main Command
+- **reef**: Unified CLI with subcommands (replaces individual reef-* scripts)
+
+### Subcommands
+1. **reef kick**: Move file/dir from BASE to TWIN, replace with symlink
+2. **reef status**: Display relationships between BASE and TWIN files
+3. **reef recall**: Move file back from TWIN to BASE, remove symlink
+4. **reef plug**: Create symlinks in BASE for all TWIN contents
+5. **reef unplug**: Remove all symlinks in BASE pointing to TWIN
+
+### Legacy Scripts
+The original individual scripts (`reef-kick`, `reef-status`, etc.) are preserved in the `legacy/` directory for reference.
 
 ## Development Commands
 
-### Testing Scripts
+### Testing the Unified Command
 ```bash
-# Test reef-kick (move file to twin)
-./reef-kick src/example.js
-./reef-kick -v config/  # verbose mode
+# Test reef kick (move file to twin)
+./reef kick src/example.js
+./reef kick -v config/  # verbose mode
 
 # Check status
-./reef-status
-./reef-status --suffix=-experiment  # custom suffix
+./reef status
+./reef status --suffix=-experiment  # custom suffix
 
-# Test reef-plug (link all twin files)
-./reef-plug
+# Test reef plug (link all twin files)
+./reef plug
 
-# Test reef-recall (move back to base)
-./reef-recall src/example.js
+# Test reef recall (move back to base)
+./reef recall src/example.js
 
-# Test reef-unplug (remove all twin links)
-./reef-unplug
+# Test reef unplug (remove all twin links)
+./reef unplug
+
+# Get help
+./reef --help
+./reef kick --help  # subcommand-specific help
+```
+
+### Installation
+```bash
+# Install to user's local bin (recommended)
+./install.sh
+
+# Or copy manually
+cp reef ~/.local/bin/
+chmod +x ~/.local/bin/reef
 ```
 
 ### Script Validation
 ```bash
 # Check bash syntax
-bash -n reef-*
+bash -n reef
 
 # Test with shellcheck (if installed)
-shellcheck reef-*
+shellcheck reef
+
+# Legacy scripts validation
+bash -n legacy/reef-*
+shellcheck legacy/reef-*
 ```
 
 ## Architecture & Conventions
 
-### Shared Patterns
-All scripts follow consistent patterns that must be maintained:
+### Unified Design Principles
+The consolidated `reef` command maintains all patterns from the original scripts:
 
 1. **TTY Detection**: Color/symbol output with fallback
    - Check `[ -t 1 ]` for TTY
