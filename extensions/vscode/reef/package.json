@@ -1,0 +1,91 @@
+{
+  "name": "reef",
+  "displayName": "Reef",
+  "description": "A unified workspace management system that creates and manages \"twin\" workspaces for project development.",
+  "version": "0.0.1",
+  "engines": {
+    "vscode": "^1.104.0"
+  },
+  "categories": [
+    "Other"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/zenosumo/reef.git",
+    "directory": "extensions/vscode/reef"
+  },
+  "activationEvents": [],
+  "main": "./out/extension.js",
+  "contributes": {
+    "commands": [
+      {
+        "command": "reef.status",
+        "title": "Reef: Status"
+      },
+      {
+        "command": "reef.kickCurrent",
+        "title": "Reef: Kick Current File"
+      },
+      {
+        "command": "reef.recallCurrent",
+        "title": "Reef: Recall Current File"
+      },
+      {
+        "command": "reef.plugAll",
+        "title": "Reef: Plug All"
+      },
+      {
+        "command": "reef.unplugAll",
+        "title": "Reef: Unplug All"
+      }
+    ],
+    "menus": {
+      "editor/context": [
+        {
+          "command": "reef.kickCurrent",
+          "group": "reef@1",
+          "when": "editorFocus"
+        },
+        {
+          "command": "reef.recallCurrent",
+          "group": "reef@2",
+          "when": "editorFocus"
+        }
+      ]
+    },
+    "configuration": {
+      "title": "Reef",
+      "properties": {
+        "reef.suffix": {
+          "type": "string",
+          "default": "-reef",
+          "description": "Suffix for twin workspace directories"
+        },
+        "reef.executablePath": {
+          "type": "string",
+          "default": "reef",
+          "description": "Path to reef executable (default: 'reef' from PATH)"
+        }
+      }
+    }
+  },
+  "scripts": {
+    "vscode:prepublish": "npm run compile",
+    "compile": "tsc -p ./",
+    "watch": "tsc -watch -p ./",
+    "pretest": "npm run compile && npm run lint",
+    "lint": "eslint src",
+    "test": "vscode-test"
+  },
+  "devDependencies": {
+    "@types/vscode": "^1.104.0",
+    "@types/mocha": "^10.0.10",
+    "@types/node": "22.x",
+    "@typescript-eslint/eslint-plugin": "^8.42.0",
+    "@typescript-eslint/parser": "^8.42.0",
+    "eslint": "^9.34.0",
+    "typescript": "^5.9.2",
+    "@vscode/test-cli": "^0.0.11",
+    "@vscode/test-electron": "^2.5.2"
+  }
+}
